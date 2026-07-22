@@ -1,0 +1,119 @@
+"use client";
+
+import { useCallback, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { SlidersHorizontal } from "lucide-react";
+import { CourtsMap } from "@/components/courts-map";
+import { CourtCard } from "@/components/court-card";
+import { Header, MobileNav } from "@/components/header";
+import { Input } from "@/components/ui";
+import { courtsApi } from "@/lib/api";
+import { useMapStore } from "@/store/map";
+
+export default function MapPage() {
+  const [bbox, setBbox] = useState("48.9,53.2,49.9,53.8");
+  const [search, setSearch] = useState("");
+  const { selectedCourtId, selectCourt, filters, setFilters } = useMapStore();
+  const query = useMemo(() => {
+    const p = new URLSearchParams({ bbox, page_size: "100" });
+    if (filters.surface) p.set("surface", filters.surface);
+    if (filters.condition) p.set("condition", filters.condition);
+    if (filters.hasLighting) p.set("has_lighting", "true");
+    return p.toString();
+  }, [bbox, filters]);
+  const courts =
+    useQuery({
+      queryKey: ["courts", query],
+      queryFn: () => courtsApi.list(query),
+    }).data?.results ?? [];
+  const visible = courts.filter(
+    (court) =>
+      court.name.toLowerCase().includes(search.toLowerCase()) ||
+      court.address.toLowerCase().includes(search.toLowerCase()),
+  );
+  const selected = courts.find((court) => court.id === selectedCourtId);
+  const onBounds = useCallback(
+    (b: { minLon: number; minLat: number; maxLon: number; maxLat: number }) =>
+      setBbox(`${b.minLon},${b.minLat},${b.maxLon},${b.maxLat}`),
+    [],
+  );
+  return (
+    <div className="h-dvh overflow-hidden">
+      <Header />
+      <main className="grid h-[calc(100dvh-64px)] md:grid-cols-[390px_1fr]">
+        <aside className="hidden overflow-y-auto border-r border-line bg-canvas p-4 md:block">
+          <div className="mb-4 flex gap-2">
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Название или адрес"
+            />
+            <button
+              aria-label="Фильтры"
+              className="rounded-xl border border-line bg-white px-4"
+            >
+              <SlidersHorizontal />
+            </button>
+          </div>
+          <div className="mb-4 flex gap-2 overflow-x-auto">
+            <select
+              className="rounded-full border border-line bg-white px-3 py-2 text-sm"
+              value={filters.surface}
+              onChange={(e) => setFilters({ surface: e.target.value })}
+            >
+              <option value="">Покрытие</option>
+              <option value="asphalt">Асфальт</option>
+              <option value="rubber">Резина</option>
+              <option value="concrete">Бетон</option>
+            </select>
+            <label className="whitespace-nowrap rounded-full border border-line bg-white px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                checked={filters.hasLighting}
+                onChange={(e) => setFilters({ hasLighting: e.target.checked })}
+              />{" "}
+              Со светом
+            </label>
+          </div>
+          <p className="mb-3 text-xs font-bold uppercase tracking-widest text-muted">
+            Найдено: {visible.length}
+          </p>
+          <div className="space-y-3">
+            {visible.map((court) => (
+              <CourtCard
+                key={court.id}
+                court={court}
+                compact
+                onClick={() => selectCourt(court.id)}
+              />
+            ))}
+          </div>
+        </aside>
+        <section className="relative">
+          <CourtsMap
+            courts={visible}
+            onBounds={onBounds}
+            onSelect={selectCourt}
+          />
+          {selected && (
+            <div className="absolute inset-x-3 bottom-20 z-20 md:bottom-4 md:left-auto md:w-96">
+              <CourtCard court={selected} compact />
+            </div>
+          )}
+          <div className="absolute left-3 top-3 z-10 flex w-[calc(100%-24px)] gap-2 md:hidden">
+            <Input
+              className="shadow-lg"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Поиск площадки"
+            />
+            <button className="rounded-xl bg-dark px-4 text-white">
+              <SlidersHorizontal />
+            </button>
+          </div>
+        </section>
+      </main>
+      <MobileNav />
+    </div>
+  );
+}

@@ -1,0 +1,9 @@
+-r requirements.txt
+pytest==9.0.3
+pytest-django==4.10.0
+factory-boy==3.3.3
+ruff==0.9.10
+mypy==1.15.0
+django-stubs[compatible-mypy]==6.0.7
+djangorestframework-stubs[compatible-mypy]==3.17.0
+pip-audit==2.10.1

@@ -1,0 +1,52 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:17-3.5
+        env: { POSTGRES_DB: hoopmap_test, POSTGRES_USER: hoopmap, POSTGRES_PASSWORD: hoopmap }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U hoopmap -d hoopmap_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      POSTGRES_DB: hoopmap_test
+      POSTGRES_USER: hoopmap
+      POSTGRES_PASSWORD: hoopmap
+      POSTGRES_HOST: localhost
+      DJANGO_SECRET_KEY: test-only
+    defaults: { run: { working-directory: basketball-courts/backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13", cache: pip, cache-dependency-path: basketball-courts/backend/requirements-dev.txt }
+      - run: sudo apt-get update && sudo apt-get install -y gdal-bin libgdal-dev libgeos-dev
+      - run: pip install -r requirements-dev.txt
+      - run: pip-audit -r requirements.txt
+      - run: pip-audit -r ../bot/requirements.txt
+      - run: ruff check .
+      - run: mypy apps config
+      - run: python manage.py makemigrations --check --dry-run
+      - run: pytest
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: basketball-courts/frontend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: basketball-courts/frontend/package-lock.json }
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

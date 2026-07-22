@@ -1,0 +1,29 @@
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+exclude = ["**/migrations/*.py", ".venv", ".venv312"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "DJ"]
+ignore = ["DJ001"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.test_settings"
+python_files = ["test_*.py"]
+addopts = "-q --disable-warnings --strict-markers"
+
+[tool.mypy]
+python_version = "3.13"
+plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main"]
+check_untyped_defs = true
+disallow_untyped_defs = false
+no_implicit_optional = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+exclude = ["migrations"]
+
+[tool.django-stubs]
+django_settings_module = "config.typecheck_settings"

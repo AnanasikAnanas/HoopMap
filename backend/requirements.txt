@@ -1,0 +1,16 @@
+Django==5.2.16
+djangorestframework==3.17.1
+djangorestframework-simplejwt==5.5.1
+PyJWT==2.13.0
+django-filter==26.1
+drf-spectacular==0.30.0
+django-cors-headers==4.9.0
+psycopg[binary]==3.2.5
+Pillow==12.3.0
+celery[redis]==5.4.0
+django-storages[s3]==1.14.5
+boto3==1.37.10
+gunicorn==23.0.0
+uvicorn==0.34.0
+whitenoise==6.9.0
+requests==2.34.2

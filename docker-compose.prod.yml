@@ -1,0 +1,36 @@
+services:
+  backend:
+    build: { context: ./backend, target: runtime }
+    environment: { DJANGO_DEBUG: "false" }
+    command: ["sh", "-c", "python manage.py check --deploy --fail-level ERROR && python manage.py migrate && python manage.py collectstatic --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 60 --access-logfile -"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    deploy: { resources: { limits: { memory: 1G } } }
+  celery:
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    deploy: { resources: { limits: { memory: 768M } } }
+  celery-beat:
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+  bot:
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+  frontend:
+    build:
+      context: ./frontend
+      target: runner
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
+        NEXT_PUBLIC_MAP_STYLE_URL: ${NEXT_PUBLIC_MAP_STYLE_URL:-https://demotiles.maplibre.org/style.json}
+    command: ["node", "server.js"]
+    environment: { NODE_ENV: production }
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    deploy: { resources: { limits: { memory: 512M } } }
+  postgres:
+    ports: []
+  redis:
+    ports: []
+  minio:
+    ports: []
