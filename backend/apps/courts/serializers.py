@@ -84,6 +84,10 @@ class CourtSerializer(serializers.ModelSerializer):
             "is_favorite",
         )
         read_only_fields = ("id", "slug", "created_by", "verified_at", "created_at", "updated_at")
+        extra_kwargs = {
+            "source": {"required": False, "allow_blank": True, "default": ""},
+            "source_id": {"required": False, "allow_blank": True, "default": ""},
+        }
 
     def get_photos(self, obj: Court):
         request = self.context.get("request")
