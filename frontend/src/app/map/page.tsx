@@ -50,14 +50,14 @@ export default function MapPage() {
             />
             <button
               aria-label="Фильтры"
-              className="rounded-xl border border-line bg-white px-4"
+              className="rounded-xl border border-line bg-surface px-4 text-ink"
             >
               <SlidersHorizontal />
             </button>
           </div>
           <div className="mb-4 flex gap-2 overflow-x-auto">
             <select
-              className="rounded-full border border-line bg-white px-3 py-2 text-sm"
+              className="rounded-full border border-line bg-surface px-3 py-2 text-sm text-ink"
               value={filters.surface}
               onChange={(e) => setFilters({ surface: e.target.value })}
             >
@@ -66,7 +66,7 @@ export default function MapPage() {
               <option value="rubber">Резина</option>
               <option value="concrete">Бетон</option>
             </select>
-            <label className="whitespace-nowrap rounded-full border border-line bg-white px-3 py-2 text-sm">
+            <label className="whitespace-nowrap rounded-full border border-line bg-surface px-3 py-2 text-sm text-ink">
               <input
                 type="checkbox"
                 checked={filters.hasLighting}

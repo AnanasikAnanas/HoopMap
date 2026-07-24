@@ -22,7 +22,10 @@ export function Button({
 export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn("rounded-3xl border border-line bg-white", className)}
+      className={cn(
+        "rounded-3xl border border-line bg-surface text-ink",
+        className,
+      )}
       {...props}
     />
   );
@@ -34,7 +37,7 @@ export function Input({
   return (
     <input
       className={cn(
-        "h-12 w-full rounded-xl border border-line bg-white px-4 outline-none transition focus:border-orange focus:ring-2 focus:ring-orange/15",
+        "h-12 w-full rounded-xl border border-line bg-surface px-4 text-ink outline-none transition focus:border-orange focus:ring-2 focus:ring-orange/15",
         className,
       )}
       {...props}

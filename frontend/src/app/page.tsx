@@ -38,7 +38,7 @@ export default function HomePage() {
               </Link>
               <Link
                 href="/courts/add"
-                className="flex min-h-12 items-center gap-2 rounded-full border border-line bg-white px-6 font-bold"
+                className="flex min-h-12 items-center gap-2 rounded-full border border-line bg-surface px-6 font-bold text-ink"
               >
                 <Plus size={18} /> Добавить площадку
               </Link>
@@ -66,7 +66,7 @@ export default function HomePage() {
             ].map(({ icon: Icon, title, text }, i) => (
               <article
                 key={title}
-                className="rounded-3xl border border-line bg-white p-7"
+                className="rounded-3xl border border-line bg-surface p-7 text-ink"
               >
                 <span className="mb-10 flex h-12 w-12 items-center justify-center rounded-full bg-orange/10 text-orange">
                   <Icon />

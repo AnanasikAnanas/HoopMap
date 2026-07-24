@@ -5,15 +5,16 @@ export default {
   theme: {
     extend: {
       colors: {
-        canvas: "#F5F5F2",
-        ink: "#171717",
-        muted: "#727272",
-        line: "#E4E4DF",
-        orange: "#F26A2E",
-        success: "#198754",
-        dark: "#20252B",
-        warning: "#F2B544",
-        danger: "#D94A4A",
+        canvas: "rgb(var(--color-canvas) / <alpha-value>)",
+        surface: "rgb(var(--color-surface) / <alpha-value>)",
+        ink: "rgb(var(--color-ink) / <alpha-value>)",
+        muted: "rgb(var(--color-muted) / <alpha-value>)",
+        line: "rgb(var(--color-line) / <alpha-value>)",
+        orange: "rgb(var(--color-orange) / <alpha-value>)",
+        success: "rgb(var(--color-success) / <alpha-value>)",
+        dark: "rgb(var(--color-dark) / <alpha-value>)",
+        warning: "rgb(var(--color-warning) / <alpha-value>)",
+        danger: "rgb(var(--color-danger) / <alpha-value>)",
       },
       fontFamily: {
         sans: ["var(--font-manrope)"],

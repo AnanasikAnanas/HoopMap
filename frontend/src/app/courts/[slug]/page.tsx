@@ -73,7 +73,7 @@ export default function CourtPage() {
               ) : (
                 <div className="court-lines h-full" />
               )}
-              <Badge className="absolute left-4 top-4 bg-white">
+              <Badge className="absolute left-4 top-4 bg-surface">
                 {court.status === "published" ? "Опубликована" : "На модерации"}
               </Badge>
             </div>
@@ -163,7 +163,7 @@ export default function CourtPage() {
               Построить маршрут
             </a>
             <Button
-              className="w-full bg-white text-ink ring-1 ring-line"
+              className="w-full bg-surface text-ink ring-1 ring-line"
               onClick={() => favorite.mutate()}
             >
               <Heart

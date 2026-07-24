@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { CircleUserRound, Map, Trophy } from "lucide-react";
+import { ThemeToggle } from "./theme-toggle";
 
 export function Header() {
   return (
@@ -16,9 +17,16 @@ export function Header() {
           <Link href="/games">Игры</Link>
           <Link href="/courts/add">Добавить площадку</Link>
         </nav>
-        <Link href="/profile" aria-label="Профиль">
-          <CircleUserRound />
-        </Link>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <Link
+            href="/profile"
+            aria-label="Профиль"
+            className="flex h-10 w-10 items-center justify-center rounded-full text-ink transition hover:text-orange"
+          >
+            <CircleUserRound />
+          </Link>
+        </div>
       </div>
     </header>
   );
@@ -26,7 +34,7 @@ export function Header() {
 
 export function MobileNav() {
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-3 border-t border-line bg-white px-5 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 md:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-3 border-t border-line bg-surface px-5 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 text-ink md:hidden">
       <Link className="flex flex-col items-center text-xs" href="/map">
         <Map size={20} />
         Карта

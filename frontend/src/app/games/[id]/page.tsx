@@ -76,7 +76,7 @@ export default function GamePage() {
           </Card>
           <div>
             <Button
-              className={`w-full ${game.is_joined ? "bg-white text-ink ring-1 ring-line" : ""}`}
+              className={`w-full ${game.is_joined ? "bg-surface text-ink ring-1 ring-line" : ""}`}
               onClick={() => membership.mutate()}
               disabled={membership.isPending}
             >

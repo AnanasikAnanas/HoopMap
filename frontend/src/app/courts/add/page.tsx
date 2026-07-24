@@ -294,7 +294,7 @@ export default function AddCourtPage() {
           <div className="mt-6 flex justify-between">
             <Button
               type="button"
-              className="bg-white text-ink ring-1 ring-line"
+              className="bg-surface text-ink ring-1 ring-line"
               disabled={step === 0}
               onClick={() => setStep((s) => s - 1)}
             >
