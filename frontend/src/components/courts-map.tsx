@@ -23,7 +23,7 @@ function colorFor(court: Court): string {
   return "#F26A2E";
 }
 
-function courtGeoJson(courts: Court[]) {
+function courtGeoJson(courts: Court[], selectedCourtId?: number | null) {
   return {
     type: "FeatureCollection" as const,
     features: courts.map((court) => ({
@@ -32,7 +32,12 @@ function courtGeoJson(courts: Court[]) {
         type: "Point" as const,
         coordinates: [court.location.lon, court.location.lat],
       },
-      properties: { id: court.id, name: court.name, color: colorFor(court) },
+      properties: {
+        id: court.id,
+        name: court.name,
+        color: colorFor(court),
+        selected: court.id === selectedCourtId,
+      },
     })),
   };
 }
@@ -45,6 +50,7 @@ export function CourtsMap({
   picked,
   initialCenter,
   userLocation,
+  selectedCourtId,
 }: {
   courts: Court[];
   onBounds?: (bounds: Bounds) => void;
@@ -53,15 +59,18 @@ export function CourtsMap({
   picked?: { lat: number; lon: number };
   initialCenter?: { lat: number; lon: number };
   userLocation?: { lat: number; lon: number };
+  selectedCourtId?: number | null;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const pickedMarker = useRef<Marker | null>(null);
   const userMarker = useRef<Marker | null>(null);
   const userMovedMap = useRef(false);
+  const lastCenteredCourtId = useRef<number | null>(null);
   const latestCourts = useRef(courts);
   const latestInitialCenter = useRef(initialCenter);
   const latestUserLocation = useRef(userLocation);
+  const latestSelectedCourtId = useRef(selectedCourtId);
   const latestBounds = useRef(onBounds);
   const latestSelect = useRef(onSelect);
   const latestPick = useRef(pickLocation);
@@ -72,6 +81,7 @@ export function CourtsMap({
     latestCourts.current = courts;
     latestInitialCenter.current = initialCenter;
     latestUserLocation.current = userLocation;
+    latestSelectedCourtId.current = selectedCourtId;
   }, [
     onBounds,
     onSelect,
@@ -79,6 +89,7 @@ export function CourtsMap({
     courts,
     initialCenter,
     userLocation,
+    selectedCourtId,
   ]);
 
   useEffect(() => {
@@ -150,19 +161,51 @@ export function CourtsMap({
           paint: { "text-color": "#fff" },
         });
         instance.addLayer({
+          id: "court-selected-halo",
+          type: "circle",
+          source: "courts",
+          filter: [
+            "all",
+            ["!", ["has", "point_count"]],
+            ["==", ["get", "selected"], true],
+          ],
+          paint: {
+            "circle-color": "#F26A2E",
+            "circle-radius": 18,
+            "circle-opacity": 0.2,
+            "circle-stroke-width": 2,
+            "circle-stroke-color": "#F26A2E",
+            "circle-stroke-opacity": 0.45,
+          },
+        });
+        instance.addLayer({
           id: "court-points",
           type: "circle",
           source: "courts",
           filter: ["!", ["has", "point_count"]],
           paint: {
             "circle-color": ["get", "color"],
-            "circle-radius": 9,
-            "circle-stroke-width": 3,
+            "circle-radius": [
+              "case",
+              ["==", ["get", "selected"], true],
+              12,
+              9,
+            ],
+            "circle-radius-transition": { duration: 180 },
+            "circle-stroke-width": [
+              "case",
+              ["==", ["get", "selected"], true],
+              4,
+              3,
+            ],
             "circle-stroke-color": "#fff",
           },
         });
         (instance.getSource("courts") as GeoJSONSource).setData(
-          courtGeoJson(latestCourts.current),
+          courtGeoJson(
+            latestCourts.current,
+            latestSelectedCourtId.current,
+          ),
         );
         instance.on("click", "court-points", (event) => {
           const id = event.features?.[0]?.properties?.id as number | undefined;
@@ -182,6 +225,14 @@ export function CourtsMap({
                 });
             });
         });
+        for (const layer of ["court-points", "clusters"]) {
+          instance.on("mouseenter", layer, () => {
+            instance.getCanvas().style.cursor = "pointer";
+          });
+          instance.on("mouseleave", layer, () => {
+            instance.getCanvas().style.cursor = "";
+          });
+        }
         const bounds = instance.getBounds();
         latestBounds.current?.({
           minLon: bounds.getWest(),
@@ -218,8 +269,25 @@ export function CourtsMap({
   useEffect(() => {
     const source = map.current?.getSource("courts") as
       GeoJSONSource | undefined;
-    source?.setData(courtGeoJson(courts));
-  }, [courts]);
+    source?.setData(courtGeoJson(courts, selectedCourtId));
+    if (!selectedCourtId) {
+      lastCenteredCourtId.current = null;
+      return;
+    }
+    if (!map.current || lastCenteredCourtId.current === selectedCourtId) {
+      return;
+    }
+    const selected = courts.find((court) => court.id === selectedCourtId);
+    if (!selected) return;
+    lastCenteredCourtId.current = selectedCourtId;
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    map.current.easeTo({
+      center: [selected.location.lon, selected.location.lat],
+      duration: reduceMotion ? 0 : 420,
+    });
+  }, [courts, selectedCourtId]);
 
   useEffect(() => {
     if (!initialCenter || !map.current || userMovedMap.current) return;

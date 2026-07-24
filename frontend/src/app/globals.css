@@ -70,3 +70,63 @@ textarea::placeholder {
 .safe-bottom {
   padding-bottom: max(1rem, env(safe-area-inset-bottom));
 }
+
+.map-filter-reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-8px);
+  transition:
+    grid-template-rows 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 160ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    margin 220ms ease;
+}
+.map-filter-reveal.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: translateY(0);
+}
+.map-filter-popover {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-10px) scale(0.98);
+  transform-origin: top right;
+  transition:
+    visibility 0s linear 180ms,
+    opacity 160ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.map-filter-popover.is-open {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+  transition-delay: 0s;
+}
+
+@keyframes court-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(28px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.court-sheet-enter {
+  animation: court-sheet-in 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: bottom center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-filter-reveal,
+  .map-filter-popover {
+    transition-duration: 1ms;
+  }
+  .court-sheet-enter {
+    animation: none;
+  }
+}

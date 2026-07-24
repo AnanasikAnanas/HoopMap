@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { Lightbulb, MapPin, Star } from "lucide-react";
 import type { Court } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { Badge, Card } from "./ui";
 
 const conditions: Record<string, string> = {
@@ -18,15 +19,20 @@ export function CourtCard({
   court,
   compact = false,
   onClick,
+  className,
 }: {
   court: Court;
   compact?: boolean;
   onClick?: () => void;
+  className?: string;
 }) {
   const photo = court.photos[0]?.thumbnail || court.photos[0]?.image;
   return (
     <Card
-      className="overflow-hidden transition hover:-translate-y-0.5 hover:shadow-lg"
+      className={cn(
+        "overflow-hidden transition hover:-translate-y-0.5 hover:shadow-lg",
+        className,
+      )}
       onClick={onClick}
     >
       {photo && !compact && (

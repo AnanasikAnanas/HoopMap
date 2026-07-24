@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MapPinned, SlidersHorizontal } from "lucide-react";
+import { MapPinned, SlidersHorizontal, X } from "lucide-react";
 import { CourtsMap } from "@/components/courts-map";
 import { CourtCard } from "@/components/court-card";
 import { Header, MobileNav } from "@/components/header";
@@ -53,17 +53,21 @@ export default function MapPage() {
     if (filters.hasLighting) p.set("has_lighting", "true");
     return p.toString();
   }, [bbox, filters]);
-  const courts =
-    useQuery({
-      queryKey: ["courts", query],
-      queryFn: () => courtsApi.list(query),
-    }).data?.results ?? [];
-  const visible = courts.filter(
-    (court) =>
-      court.name.toLowerCase().includes(search.toLowerCase()) ||
-      court.address.toLowerCase().includes(search.toLowerCase()),
+  const { data: courtPage } = useQuery({
+    queryKey: ["courts", query],
+    queryFn: () => courtsApi.list(query),
+  });
+  const courts = courtPage?.results;
+  const visible = useMemo(
+    () =>
+      (courts ?? []).filter(
+        (court) =>
+          court.name.toLowerCase().includes(search.toLowerCase()) ||
+          court.address.toLowerCase().includes(search.toLowerCase()),
+      ),
+    [courts, search],
   );
-  const selected = courts.find((court) => court.id === selectedCourtId);
+  const selected = courts?.find((court) => court.id === selectedCourtId);
   const onBounds = useCallback(
     (b: { minLon: number; minLat: number; maxLon: number; maxLat: number }) =>
       setBbox(`${b.minLon},${b.minLat},${b.maxLon},${b.maxLat}`),
@@ -103,7 +107,7 @@ export default function MapPage() {
               aria-expanded={filtersOpen}
               aria-controls="desktop-map-filters"
               onClick={() => setFiltersOpen((open) => !open)}
-              className={`relative rounded-xl border px-4 transition ${
+              className={`relative rounded-xl border px-4 transition active:scale-95 ${
                 filtersOpen || activeFilterCount
                   ? "border-orange bg-orange text-white"
                   : "border-line bg-surface text-ink hover:border-orange hover:text-orange"
@@ -117,15 +121,23 @@ export default function MapPage() {
               )}
             </button>
           </div>
-          {filtersOpen && (
-            <MapFilterPanel
-              id="desktop-map-filters"
-              className="mb-4 shadow-md"
-              filters={filters}
-              onChange={setFilters}
-              onReset={resetFilters}
-            />
-          )}
+          <div
+            className={`map-filter-reveal ${
+              filtersOpen ? "is-open mb-4" : ""
+            }`}
+            aria-hidden={!filtersOpen}
+            inert={!filtersOpen}
+          >
+            <div className="min-h-0 overflow-hidden">
+              <MapFilterPanel
+                id="desktop-map-filters"
+                className="shadow-md"
+                filters={filters}
+                onChange={setFilters}
+                onReset={resetFilters}
+              />
+            </div>
+          </div>
           <p className="mb-3 text-xs font-bold uppercase tracking-widest text-muted">
             Найдено: {visible.length}
           </p>
@@ -147,6 +159,7 @@ export default function MapPage() {
             onSelect={selectCourt}
             initialCenter={userLocation ?? user?.map_home ?? undefined}
             userLocation={userLocation}
+            selectedCourtId={selectedCourtId}
           />
           {userLocation &&
             user &&
@@ -186,8 +199,26 @@ export default function MapPage() {
               </div>
             )}
           {selected && (
-            <div className="absolute inset-x-3 bottom-20 z-20 md:bottom-4 md:left-auto md:w-96">
-              <CourtCard court={selected} compact />
+            <div
+              key={selected.id}
+              className="court-sheet-enter absolute inset-x-3 bottom-20 z-20 rounded-3xl border border-line bg-surface p-2 shadow-2xl md:bottom-4 md:left-auto md:w-96"
+            >
+              <div className="relative flex min-h-8 items-center justify-center md:justify-end">
+                <span className="h-1 w-12 rounded-full bg-line md:hidden" />
+                <button
+                  type="button"
+                  aria-label="Закрыть карточку площадки"
+                  onClick={() => selectCourt(null)}
+                  className="absolute right-0 top-0 grid h-8 w-8 place-items-center rounded-full text-muted transition hover:bg-canvas hover:text-ink active:scale-90"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <CourtCard
+                court={selected}
+                compact
+                className="border-0 shadow-none hover:translate-y-0 hover:shadow-none"
+              />
             </div>
           )}
           <div className="absolute left-3 top-3 z-10 flex w-[calc(100%-24px)] gap-2 md:hidden">
@@ -203,7 +234,7 @@ export default function MapPage() {
               aria-expanded={filtersOpen}
               aria-controls="mobile-map-filters"
               onClick={() => setFiltersOpen((open) => !open)}
-              className={`relative rounded-xl px-4 text-white shadow-lg transition ${
+              className={`relative rounded-xl px-4 text-white shadow-lg transition active:scale-95 ${
                 filtersOpen || activeFilterCount ? "bg-orange" : "bg-dark"
               }`}
             >
@@ -215,15 +246,20 @@ export default function MapPage() {
               )}
             </button>
           </div>
-          {filtersOpen && (
+          <div
+            className={`map-filter-popover absolute left-3 right-3 top-[72px] z-20 md:hidden ${
+              filtersOpen ? "is-open" : ""
+            }`}
+            aria-hidden={!filtersOpen}
+            inert={!filtersOpen}
+          >
             <MapFilterPanel
               id="mobile-map-filters"
-              className="absolute left-3 right-3 top-[72px] z-20 md:hidden"
               filters={filters}
               onChange={setFilters}
               onReset={resetFilters}
             />
-          )}
+          </div>
         </section>
       </main>
       <MobileNav />
