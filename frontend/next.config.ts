@@ -1,6 +1,15 @@
 import type { NextConfig } from "next";
 
-const mediaHost = process.env.NEXT_PUBLIC_MEDIA_HOST?.trim();
+const supabaseHost = (() => {
+  try {
+    return process.env.NEXT_PUBLIC_SUPABASE_URL
+      ? new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).hostname
+      : "";
+  } catch {
+    return "";
+  }
+})();
+const mediaHost = process.env.NEXT_PUBLIC_MEDIA_HOST?.trim() || supabaseHost;
 if (mediaHost && !/^[a-z0-9.-]+$/i.test(mediaHost)) {
   throw new Error("NEXT_PUBLIC_MEDIA_HOST must be a hostname without a protocol or path");
 }

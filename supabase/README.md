@@ -1,112 +1,83 @@
-# Supabase setup for HOOPMAP
+# Supabase для HOOPMAP
 
-Supabase provides PostgreSQL/PostGIS and public image storage. Django continues to own the
-application schema, JWT authentication, permissions and business logic. Supabase Auth and the
-Supabase Data API are intentionally not used.
+Текущая версия работает без отдельного Django-хостинга, Redis, Celery и постоянно запущенного
+процесса Telegram-бота. Next.js размещается на Vercel и выполняет API-функции, а Supabase
+предоставляет PostgreSQL/PostGIS, Auth и Storage.
 
-## 1. Prepare the database
+## 1. Создание базы
 
-1. Create a Supabase project in a region close to the Django API service.
-2. Open **SQL Editor**, paste `bootstrap.sql` and run it once.
-3. Open **Connect**, select **Session pooler**, and copy the connection string.
+1. Создайте бесплатный проект Supabase.
+2. Откройте **SQL Editor → New query**.
+3. Скопируйте весь файл `bootstrap.sql`, вставьте и нажмите **Run**.
+4. При желании сразу добавьте тестовые площадки: выполните `seed.sql` тем же способом.
 
-The bootstrap creates a private `hoopmap` schema and enables PostGIS. Django places its tables in
-that schema instead of `public`, so they are not exposed through the Supabase Data API.
+`bootstrap.sql` можно запускать повторно. Он создаёт таблицы, индексы PostGIS, атомарные функции
+для игр и подтверждений, ограничения частоты запросов и RLS-политики.
 
-Copy the environment template and fill it with real values:
+## 2. Ключи
 
-```bash
-cp .env.supabase.example .env.supabase
-```
+В Supabase откройте **Project Settings → API Keys** и скопируйте:
 
-Use the Session pooler URL on port `5432` with `DB_POOL_MODE=session`. If the deployment platform
-only supports short-lived/serverless connections, use the Transaction pooler URL on port `6543`
-and set `DB_POOL_MODE=transaction`; the project then disables persistent and prepared connections.
+- Project URL → `NEXT_PUBLIC_SUPABASE_URL`;
+- Publishable key (или legacy `anon`) → `NEXT_PUBLIC_SUPABASE_ANON_KEY`;
+- Secret key (или legacy `service_role`) → `SUPABASE_SERVICE_ROLE_KEY`.
 
-If the database password contains `@`, `:`, `/`, `#`, `%` or other URL-special characters, percent-
-encode it before placing it in `DATABASE_URL`.
+Publishable/anon key разрешено передавать браузеру: доступ ограничен RLS. Secret/service-role key
+обходит RLS и должен находиться только в Vercel Environment Variables. Никогда не добавляйте его в
+переменную с префиксом `NEXT_PUBLIC_`, GitHub или сообщения.
 
-## 2. Prepare Storage
+Storage bucket `hoopmap-media` создаётся SQL-скриптом автоматически.
 
-1. Open **Storage** and create a public bucket named `hoopmap-media`.
-2. Set its file size limit to `10 MB`.
-3. Allow `image/jpeg`, `image/png` and `image/webp`.
-4. Open **Storage > Configuration > S3**, enable the S3 protocol and generate server-side access
-   keys.
-5. Copy the endpoint, region, access key and secret into `.env.supabase`.
+## 3. Vercel
 
-Use the direct storage endpoint shown in the template:
+1. Импортируйте GitHub-репозиторий в Vercel.
+2. В **Root Directory** укажите `frontend`.
+3. Framework оставьте `Next.js`.
+4. Добавьте все переменные из `frontend/.env.vercel.example`, подставив реальные значения.
+5. Нажмите **Deploy**.
 
-```text
-https://PROJECT_REF.storage.supabase.co/storage/v1/s3
-```
+Отдельный Vercel-проект для `backend` создавать не нужно. `NEXT_PUBLIC_API_URL` должен оставаться
+равным `/api/v1`.
 
-The S3 keys bypass Storage RLS. Keep them only in the Django API/worker secret manager and never
-add them to Vercel or any `NEXT_PUBLIC_*` variable. The bucket is public only because court photos
-must be directly readable by browsers; all writes still go through authenticated Django endpoints.
+## 4. Telegram
 
-## 3. Initialize the application
+После первого deployment:
 
-Run these as one-off commands on the Django hosting platform:
+1. Установите `TELEGRAM_WEBAPP_URL` равным production URL сайта.
+2. Сгенерируйте `TELEGRAM_WEBHOOK_SECRET` и `RATE_LIMIT_SECRET` как разные случайные строки длиной
+   минимум 32 байта.
+3. Redeploy проект, чтобы новые переменные применились.
+4. Зарегистрируйте webhook:
 
-```bash
-python manage.py migrate
-python manage.py collectstatic --noinput
-python manage.py createsuperuser
-python manage.py check_supabase --storage
-```
+   ```bash
+   cd frontend
+   TELEGRAM_BOT_TOKEN='...' \
+   TELEGRAM_WEBHOOK_SECRET='...' \
+   TELEGRAM_WEBAPP_URL='https://YOUR_PROJECT.vercel.app' \
+   npm run telegram:webhook
+   ```
 
-The last command verifies the active private schema, PostGIS and a complete temporary Storage
-write/read/delete cycle. It does not leave a test object behind.
+5. В BotFather настройте Menu Button/Web App на `TELEGRAM_WEBAPP_URL`.
 
-Start the long-running services separately:
+Бот принимает Telegram updates по адресу `/api/telegram/webhook`; отдельный контейнер больше не
+нужен.
 
-```text
-web:          gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 3 --timeout 60
-worker:       celery -A config worker -l INFO --concurrency=2
-scheduler:    celery -A config beat -l INFO
-telegram-bot: python -m app.main
-```
+## 5. Первый администратор
 
-The backend platform must also provide a Redis URL. Supabase does not replace Redis or the Celery
-worker processes.
+Сначала откройте сайт через Telegram Mini App хотя бы один раз. Затем в Supabase:
 
-## 4. Configure Vercel
+1. Откройте **Table Editor → profiles**.
+2. Найдите себя по `telegram_id`.
+3. Поменяйте `role` с `user` на `admin`.
 
-Import the repository in Vercel and set the project root to `frontend`. Add only the variables from
-`frontend/.env.vercel.example`. In particular:
+После этого появится доступ к `/moderation`.
 
-```text
-NEXT_PUBLIC_API_URL=https://api.example.com/api/v1
-NEXT_PUBLIC_MEDIA_HOST=PROJECT_REF.supabase.co
-```
+## Проверка
 
-On the Django host, update these variables with the real domains:
-
-```text
-DJANGO_ALLOWED_HOSTS=api.example.com
-DJANGO_CSRF_TRUSTED_ORIGINS=https://app.example.com,https://api.example.com
-CORS_ALLOWED_ORIGINS=https://app.example.com
-TELEGRAM_WEBAPP_URL=https://app.example.com
-BACKEND_API_URL=https://api.example.com/api/v1
-```
-
-Prefer custom sibling domains such as `app.example.com` and `api.example.com`, with
-`AUTH_COOKIE_SAMESITE=Lax` and `AUTH_COOKIE_DOMAIN=.example.com`. If Vercel and the API are on
-unrelated sites, use `AUTH_COOKIE_SAMESITE=None`, `AUTH_COOKIE_SECURE=true`, leave
-`AUTH_COOKIE_DOMAIN` empty, and allow only the exact production Vercel origin in CORS.
-
-Use the same Supabase region for database and storage, and place the Django service as close to that
-region as the hosting provider allows.
-
-## 5. Release checklist
-
-- `DJANGO_DEBUG=false` and unique `DJANGO_SECRET_KEY` / `INTERNAL_API_TOKEN` values are set.
-- `API_DOCS_PUBLIC=false`, HTTPS redirect and secure refresh cookies are enabled.
-- `DJANGO_ALLOWED_HOSTS`, CORS and CSRF origins contain exact production domains without wildcards.
-- `bootstrap.sql` ran successfully before the first Django migration.
-- The `hoopmap-media` bucket is public; S3 access keys exist only on backend services.
-- `python manage.py check --deploy` reports no unexpected warnings.
-- `python manage.py check_supabase --storage` succeeds.
-- Django, worker, scheduler and bot use the same release and environment values.
-- Database and Storage backups/retention are configured for the selected Supabase plan.
+- `/api/telegram/webhook` возвращает JSON с `ok: true`;
+- карта показывает данные из `seed.sql`;
+- новая площадка получает статус `pending`;
+- обычный пользователь не видит чужие pending-площадки;
+- администратор видит их на странице `/moderation`;
+- фотография загружается напрямую в Storage по одноразовой подписанной ссылке;
+- секретные ключи отсутствуют в browser bundle и `NEXT_PUBLIC_*`.

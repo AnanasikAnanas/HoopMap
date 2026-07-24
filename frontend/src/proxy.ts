@@ -3,7 +3,9 @@ import { type NextRequest, NextResponse } from "next/server";
 function configuredOrigins(): string[] {
   const values = [
     process.env.NEXT_PUBLIC_API_URL,
-    process.env.NEXT_PUBLIC_MAP_STYLE_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.NEXT_PUBLIC_MAP_STYLE_URL ??
+      "https://tiles.openfreemap.org/styles/liberty",
     ...(process.env.CSP_CONNECT_SRC ?? "").split(/[\s,]+/),
   ];
   return Array.from(

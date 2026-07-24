@@ -73,7 +73,7 @@ export function CourtsMap({
         container: container.current,
         style:
           process.env.NEXT_PUBLIC_MAP_STYLE_URL ??
-          "https://demotiles.maplibre.org/style.json",
+          "https://tiles.openfreemap.org/styles/liberty",
         center: [49.4, 53.5],
         zoom: 11,
       });

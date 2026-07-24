@@ -1,6 +1,7 @@
 import type { Court, Game, Page, User } from "./types";
+import { createClient } from "@supabase/supabase-js";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost/api/v1";
+const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "/api/v1").replace(/\/$/, "");
 let accessToken: string | null = null;
 let refreshPromise: Promise<string | null> | null = null;
 
@@ -76,10 +77,35 @@ export const courtsApi = {
     api<Page<Court>>(`/courts/nearby/?lat=${lat}&lon=${lon}&radius=${radius}`),
   create: (body: Record<string, unknown>) =>
     api<Court>("/courts/", { method: "POST", body: JSON.stringify(body) }),
-  uploadPhoto: (id: number, image: File) => {
-    const body = new FormData();
-    body.append("image", image);
-    return api(`/courts/${id}/photos/`, { method: "POST", body });
+  uploadPhoto: async (id: number, image: File) => {
+    const prepared = await api<{ path: string; token: string }>(
+      `/courts/${id}/photos/`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          action: "prepare",
+          filename: image.name,
+          content_type: image.type,
+          size: image.size,
+        }),
+      },
+    );
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !anonKey) throw new Error("Supabase is not configured");
+    const bucket = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || "hoopmap-media";
+    const supabase = createClient(supabaseUrl, anonKey);
+    const uploaded = await supabase.storage
+      .from(bucket)
+      .uploadToSignedUrl(prepared.path, prepared.token, image, {
+        contentType: image.type,
+        upsert: false,
+      });
+    if (uploaded.error) throw uploaded.error;
+    return api(`/courts/${id}/photos/`, {
+      method: "POST",
+      body: JSON.stringify({ action: "complete", path: prepared.path }),
+    });
   },
   favorite: (id: number, active: boolean) =>
     api(`/courts/${id}/favorite/`, { method: active ? "POST" : "DELETE" }),
