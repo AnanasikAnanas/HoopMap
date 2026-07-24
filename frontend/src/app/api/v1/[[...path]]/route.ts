@@ -18,12 +18,19 @@ import {
   validateTelegramInitData,
 } from "@/lib/supabase/telegram-auth";
 import {
+  createTelegramOidcAttempt,
+  exchangeTelegramCode,
+  telegramLoginConfig,
+  validateTelegramIdToken,
+} from "@/lib/supabase/telegram-oidc";
+import {
   courtSelect,
   privateUser,
   publicUser,
   serializeCourt,
   serializeGame,
 } from "@/lib/supabase/serializers";
+import { approximateMapLocation } from "@/lib/location-privacy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -827,12 +834,180 @@ function authLogout() {
   return response;
 }
 
+async function updateMapHome(request: NextRequest) {
+  const current = await identity(request, true);
+  await rateLimit(request, "map-home", 10, 3600, current!.profile.id);
+  const input = z
+    .union([
+      z.object({
+        location: z.object({
+          lat: z.number().min(-90).max(90),
+          lon: z.number().min(-180).max(180),
+        }),
+      }),
+      z.object({ clear: z.literal(true) }),
+    ])
+    .safeParse(await body(request));
+  if (!input.success) throw new HttpError(400, "Некорректная настройка района");
+
+  const values =
+    "clear" in input.data
+      ? {
+          map_home_lat: null,
+          map_home_lon: null,
+          map_home_consent_at: null,
+        }
+      : (() => {
+          const approximate = approximateMapLocation(input.data.location);
+          return {
+            map_home_lat: approximate.lat,
+            map_home_lon: approximate.lon,
+            map_home_consent_at: new Date().toISOString(),
+          };
+        })();
+  const updated = await createServiceClient()
+    .from("profiles")
+    .update(values)
+    .eq("id", current!.profile.id)
+    .select("*")
+    .single();
+  if (updated.error) throw updated.error;
+  return json(privateUser(updated.data));
+}
+
+const telegramOidcCookies = {
+  state: "hoopmap_tg_oidc_state",
+  nonce: "hoopmap_tg_oidc_nonce",
+  verifier: "hoopmap_tg_oidc_verifier",
+  next: "hoopmap_tg_oidc_next",
+} as const;
+
+function safeNextPath(value: string | null): string {
+  return value?.startsWith("/") && !value.startsWith("//")
+    ? value.slice(0, 500)
+    : "/profile";
+}
+
+function telegramOidcCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax" as const,
+    path: "/api/v1/auth/telegram",
+    maxAge: 10 * 60,
+  };
+}
+
+function telegramOidcRedirectUri(request: NextRequest): string {
+  const configured = process.env.TELEGRAM_WEBAPP_URL?.trim();
+  const base = new URL(configured || request.nextUrl.origin);
+  return new URL("/api/v1/auth/telegram/callback/", base).toString();
+}
+
+function clearTelegramOidcCookies(response: NextResponse) {
+  for (const name of Object.values(telegramOidcCookies)) {
+    response.cookies.set(name, "", {
+      ...telegramOidcCookieOptions(),
+      maxAge: 0,
+    });
+  }
+}
+
+async function startTelegramWebLogin(request: NextRequest) {
+  await rateLimit(request, "telegram-web-login-start", 30, 900);
+  const { clientId } = telegramLoginConfig();
+  const attempt = createTelegramOidcAttempt();
+  const next = safeNextPath(request.nextUrl.searchParams.get("next"));
+  const redirectUri = telegramOidcRedirectUri(request);
+  const authorization = new URL("https://oauth.telegram.org/auth");
+  authorization.search = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: "openid profile",
+    state: attempt.state,
+    nonce: attempt.nonce,
+    code_challenge: attempt.challenge,
+    code_challenge_method: "S256",
+  }).toString();
+  const response = NextResponse.redirect(authorization);
+  const options = telegramOidcCookieOptions();
+  response.cookies.set(telegramOidcCookies.state, attempt.state, options);
+  response.cookies.set(telegramOidcCookies.nonce, attempt.nonce, options);
+  response.cookies.set(telegramOidcCookies.verifier, attempt.verifier, options);
+  response.cookies.set(telegramOidcCookies.next, next, options);
+  return response;
+}
+
+async function finishTelegramWebLogin(request: NextRequest) {
+  const loginUrl = new URL("/login", request.nextUrl.origin);
+  try {
+    await rateLimit(request, "telegram-web-login-callback", 30, 900);
+    const code = request.nextUrl.searchParams.get("code") ?? "";
+    const state = request.nextUrl.searchParams.get("state") ?? "";
+    const expectedState =
+      request.cookies.get(telegramOidcCookies.state)?.value ?? "";
+    const nonce = request.cookies.get(telegramOidcCookies.nonce)?.value ?? "";
+    const verifier =
+      request.cookies.get(telegramOidcCookies.verifier)?.value ?? "";
+    if (
+      !code ||
+      code.length > 4096 ||
+      !state ||
+      !expectedState ||
+      state !== expectedState ||
+      !nonce ||
+      !verifier
+    ) {
+      throw new Error("Invalid Telegram login state");
+    }
+    const redirectUri = telegramOidcRedirectUri(request);
+    const idToken = await exchangeTelegramCode({ code, verifier, redirectUri });
+    const identity = await validateTelegramIdToken(idToken, nonce);
+    const profile = await ensureTelegramUser(identity);
+    const session = await createTelegramSession(profile);
+    const destination = new URL(
+      safeNextPath(
+        request.cookies.get(telegramOidcCookies.next)?.value ?? "/profile",
+      ),
+      request.nextUrl.origin,
+    );
+    const response = NextResponse.redirect(destination);
+    response.cookies.set(
+      refreshCookieName(),
+      session.refresh_token,
+      refreshCookieOptions(),
+    );
+    clearTelegramOidcCookies(response);
+    return response;
+  } catch (error) {
+    console.error("Telegram web login failed", error);
+    loginUrl.searchParams.set("error", "telegram");
+    const response = NextResponse.redirect(loginUrl);
+    clearTelegramOidcCookies(response);
+    return response;
+  }
+}
+
 async function dispatch(request: NextRequest, segments: string[]): Promise<NextResponse> {
   const [resource, lookup, action] = segments;
   if (resource === "auth") {
     if (lookup === "telegram" && request.method === "POST") return authTelegram(request);
+    if (lookup === "telegram" && action === "start" && request.method === "GET") {
+      return startTelegramWebLogin(request);
+    }
+    if (
+      lookup === "telegram" &&
+      action === "callback" &&
+      request.method === "GET"
+    ) {
+      return finishTelegramWebLogin(request);
+    }
     if (lookup === "refresh" && request.method === "POST") return authRefresh(request);
     if (lookup === "logout" && request.method === "POST") return authLogout();
+    if (lookup === "map-home" && request.method === "PATCH") {
+      return updateMapHome(request);
+    }
     if (lookup === "me" && request.method === "GET") {
       const current = await identity(request, true);
       return json(privateUser(current!.profile));

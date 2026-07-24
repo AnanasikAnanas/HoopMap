@@ -19,9 +19,20 @@ export function publicUser(record: any): PublicUser | null {
 }
 
 export function privateUser(record: ProfileRecord): User {
+  const hasMapHome =
+    record.map_home_lat != null &&
+    record.map_home_lon != null &&
+    Boolean(record.map_home_consent_at);
   return {
     ...(publicUser(record) as PublicUser),
     telegram_id: record.telegram_id,
+    map_home: hasMapHome
+      ? {
+          lat: Number(record.map_home_lat),
+          lon: Number(record.map_home_lon),
+          consented_at: record.map_home_consent_at!,
+        }
+      : null,
   };
 }
 

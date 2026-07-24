@@ -43,6 +43,7 @@ export function CourtsMap({
   onSelect,
   pickLocation,
   picked,
+  initialCenter,
   userLocation,
 }: {
   courts: Court[];
@@ -50,6 +51,7 @@ export function CourtsMap({
   onSelect?: (id: number) => void;
   pickLocation?: (location: { lat: number; lon: number }) => void;
   picked?: { lat: number; lon: number };
+  initialCenter?: { lat: number; lon: number };
   userLocation?: { lat: number; lon: number };
 }) {
   const container = useRef<HTMLDivElement>(null);
@@ -58,6 +60,7 @@ export function CourtsMap({
   const userMarker = useRef<Marker | null>(null);
   const userMovedMap = useRef(false);
   const latestCourts = useRef(courts);
+  const latestInitialCenter = useRef(initialCenter);
   const latestUserLocation = useRef(userLocation);
   const latestBounds = useRef(onBounds);
   const latestSelect = useRef(onSelect);
@@ -67,8 +70,16 @@ export function CourtsMap({
     latestSelect.current = onSelect;
     latestPick.current = pickLocation;
     latestCourts.current = courts;
+    latestInitialCenter.current = initialCenter;
     latestUserLocation.current = userLocation;
-  }, [onBounds, onSelect, pickLocation, courts, userLocation]);
+  }, [
+    onBounds,
+    onSelect,
+    pickLocation,
+    courts,
+    initialCenter,
+    userLocation,
+  ]);
 
   useEffect(() => {
     if (!container.current || map.current) return;
@@ -80,13 +91,13 @@ export function CourtsMap({
         style:
           process.env.NEXT_PUBLIC_MAP_STYLE_URL ??
           "https://tiles.openfreemap.org/styles/liberty",
-        center: latestUserLocation.current
+        center: latestInitialCenter.current
           ? [
-              latestUserLocation.current.lon,
-              latestUserLocation.current.lat,
+              latestInitialCenter.current.lon,
+              latestInitialCenter.current.lat,
             ]
           : [49.4, 53.5],
-        zoom: latestUserLocation.current ? 13 : 11,
+        zoom: latestInitialCenter.current ? 13 : 11,
       });
       map.current = instance;
       if (latestUserLocation.current) {
@@ -211,6 +222,14 @@ export function CourtsMap({
   }, [courts]);
 
   useEffect(() => {
+    if (!initialCenter || !map.current || userMovedMap.current) return;
+    map.current.easeTo({
+      center: [initialCenter.lon, initialCenter.lat],
+      zoom: Math.max(map.current.getZoom(), 13),
+    });
+  }, [initialCenter]);
+
+  useEffect(() => {
     if (!userLocation || !map.current) return;
     void import("maplibre-gl").then(({ default: maplibregl }) => {
       if (!map.current) return;
@@ -218,12 +237,6 @@ export function CourtsMap({
       userMarker.current = new maplibregl.Marker({ color: "#2780E3" })
         .setLngLat([userLocation.lon, userLocation.lat])
         .addTo(map.current);
-      if (!userMovedMap.current) {
-        map.current.easeTo({
-          center: [userLocation.lon, userLocation.lat],
-          zoom: Math.max(map.current.getZoom(), 13),
-        });
-      }
     });
   }, [userLocation]);
 

@@ -67,7 +67,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
       removeThemeListener = () =>
         webApp.offEvent("themeChanged", onThemeChanged);
       if (webApp.initData) {
-        void telegramLogin(webApp.initData);
+        void telegramLogin(webApp.initData).then((user) => {
+          client.setQueryData(["me"], user);
+        });
       } else {
         void restoreSession();
       }
@@ -78,6 +80,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
       removeThemeListener?.();
       window.removeEventListener("telegram-webapp-ready", initializeTelegram);
     };
-  }, []);
+  }, [client]);
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }

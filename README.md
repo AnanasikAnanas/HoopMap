@@ -27,6 +27,7 @@ flowchart LR
 - добавление площадок и фотографий с модерацией;
 - защищённый импорт собственных CSV/GeoJSON-карт из Яндекс Конструктора;
 - безопасная проверка Telegram `initData`;
+- единый Telegram-профиль для Mini App и обычного сайта через OpenID Connect;
 - Supabase Auth sessions: access token в памяти, refresh token в `HttpOnly` cookie;
 - RLS-права для пользователей, модераторов и администраторов;
 - избранное, подтверждения актуальности и открытые игры;
@@ -90,8 +91,11 @@ basketball-courts/
 
 ```text
 POST   /auth/telegram/
+GET    /auth/telegram/start/
+GET    /auth/telegram/callback/
 POST   /auth/refresh/
 POST   /auth/logout/
+PATCH  /auth/map-home/
 GET    /auth/me/
 
 GET    /courts/

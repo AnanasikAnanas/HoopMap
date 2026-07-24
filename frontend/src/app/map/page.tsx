@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { SlidersHorizontal } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { MapPinned, SlidersHorizontal } from "lucide-react";
 import { CourtsMap } from "@/components/courts-map";
 import { CourtCard } from "@/components/court-card";
 import { Header, MobileNav } from "@/components/header";
-import { Input } from "@/components/ui";
-import { courtsApi } from "@/lib/api";
+import { Button, Input } from "@/components/ui";
+import { authApi, courtsApi } from "@/lib/api";
 import { useMapStore } from "@/store/map";
 
 export default function MapPage() {
@@ -17,6 +17,25 @@ export default function MapPage() {
     lat: number;
     lon: number;
   }>();
+  const [dismissLocationSave, setDismissLocationSave] = useState(false);
+  const [locationSaveError, setLocationSaveError] = useState("");
+  const queryClient = useQueryClient();
+  const { data: user } = useQuery({
+    queryKey: ["me"],
+    queryFn: authApi.me,
+    retry: false,
+  });
+  const saveMapHome = useMutation({
+    mutationFn: () => authApi.updateMapHome(userLocation!),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["me"], updated);
+      setDismissLocationSave(true);
+    },
+    onError: () =>
+      setLocationSaveError(
+        "Не удалось сохранить район. Проверьте вход в профиль.",
+      ),
+  });
   const { selectedCourtId, selectCourt, filters, setFilters } = useMapStore();
   const query = useMemo(() => {
     const p = new URLSearchParams({ bbox, page_size: "100" });
@@ -115,8 +134,46 @@ export default function MapPage() {
             courts={visible}
             onBounds={onBounds}
             onSelect={selectCourt}
+            initialCenter={userLocation ?? user?.map_home ?? undefined}
             userLocation={userLocation}
           />
+          {userLocation &&
+            user &&
+            !user.map_home &&
+            !dismissLocationSave && (
+              <div className="absolute inset-x-3 bottom-20 z-30 rounded-2xl border border-line bg-surface p-4 shadow-xl md:bottom-4 md:left-auto md:right-4 md:w-96">
+                <div className="flex items-start gap-3">
+                  <MapPinned className="mt-0.5 shrink-0 text-orange" size={21} />
+                  <div>
+                    <p className="font-bold">Сохранить этот район?</p>
+                    <p className="mt-1 text-xs leading-5 text-muted">
+                      Сохраним только округлённую точку примерно до 1 км. Точная
+                      геопозиция останется на этом устройстве.
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-4 flex gap-2">
+                  <Button
+                    className="flex-1"
+                    disabled={saveMapHome.isPending}
+                    onClick={() => saveMapHome.mutate()}
+                  >
+                    {saveMapHome.isPending ? "Сохраняем…" : "Сохранить"}
+                  </Button>
+                  <Button
+                    className="bg-canvas text-ink ring-1 ring-line"
+                    onClick={() => setDismissLocationSave(true)}
+                  >
+                    Не сейчас
+                  </Button>
+                </div>
+                {locationSaveError && (
+                  <p className="mt-3 text-xs font-bold text-danger">
+                    {locationSaveError}
+                  </p>
+                )}
+              </div>
+            )}
           {selected && (
             <div className="absolute inset-x-3 bottom-20 z-20 md:bottom-4 md:left-auto md:w-96">
               <CourtCard court={selected} compact />

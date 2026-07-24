@@ -16,6 +16,7 @@ export type PublicUser = {
 };
 export type User = PublicUser & {
   telegram_id: number | null;
+  map_home: (Location & { consented_at: string }) | null;
 };
 export type Court = {
   id: number;

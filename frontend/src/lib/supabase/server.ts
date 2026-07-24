@@ -11,6 +11,9 @@ export type ProfileRecord = {
   avatar_url: string;
   role: "user" | "moderator" | "admin";
   reputation: number;
+  map_home_lat: number | string | null;
+  map_home_lon: number | string | null;
+  map_home_consent_at: string | null;
   created_at: string;
   updated_at: string;
 };

@@ -1,18 +1,62 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { Heart, MapPin, Trophy } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Heart, MapPin, MapPinned, Trophy } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 import { Header, MobileNav } from "@/components/header";
-import { Card } from "@/components/ui";
+import { Button, Card } from "@/components/ui";
 import { authApi } from "@/lib/api";
 
 export default function ProfilePage() {
+  const queryClient = useQueryClient();
+  const [locationMessage, setLocationMessage] = useState("");
+  const [locating, setLocating] = useState(false);
   const { data: user, isError } = useQuery({
     queryKey: ["me"],
     queryFn: authApi.me,
     retry: false,
   });
+  const mapHome = useMutation({
+    mutationFn: authApi.updateMapHome,
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["me"], updated);
+      setLocationMessage(
+        updated.map_home
+          ? "Приблизительный район сохранён."
+          : "Сохранённый район удалён.",
+      );
+    },
+    onError: () => setLocationMessage("Не удалось обновить настройку."),
+  });
+  const saveCurrentArea = () => {
+    setLocationMessage("");
+    if (!("geolocation" in navigator)) {
+      setLocationMessage("Геолокация недоступна на этом устройстве.");
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocating(false);
+        mapHome.mutate({
+          lat: position.coords.latitude,
+          lon: position.coords.longitude,
+        });
+      },
+      () => {
+        setLocating(false);
+        setLocationMessage(
+          "Не удалось получить геопозицию. Проверьте разрешение браузера.",
+        );
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 10_000,
+        maximumAge: 5 * 60_000,
+      },
+    );
+  };
   return (
     <>
       <Header />
@@ -30,9 +74,17 @@ export default function ProfilePage() {
             {user
               ? `Репутация: ${user.reputation} · ${user.role}`
               : isError
-                ? "Откройте сервис через Telegram, чтобы войти"
+                ? "Войдите через Telegram, чтобы открыть единый профиль"
                 : "Загружаем профиль…"}
           </p>
+          {isError && (
+            <Link
+              href="/login?next=/profile"
+              className="mt-5 inline-flex min-h-11 items-center rounded-full bg-orange px-5 text-sm font-bold text-white"
+            >
+              Войти через Telegram
+            </Link>
+          )}
         </div>
         <div className="mt-6 grid gap-4 md:grid-cols-3">
           {[
@@ -49,6 +101,47 @@ export default function ProfilePage() {
             </Link>
           ))}
         </div>
+        {user && (
+          <Card className="mt-5 p-5 md:p-6">
+            <div className="flex items-start gap-3">
+              <MapPinned className="mt-0.5 shrink-0 text-orange" />
+              <div className="flex-1">
+                <h2 className="font-bold">Стартовый район карты</h2>
+                <p className="mt-1 text-sm leading-6 text-muted">
+                  {user.map_home
+                    ? "Сохранён приблизительный район. Точные координаты не хранятся."
+                    : "Можно сохранить округлённую геопозицию примерно до 1 км для входа с других устройств."}
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    disabled={mapHome.isPending || locating}
+                    onClick={saveCurrentArea}
+                  >
+                    {locating
+                      ? "Определяем…"
+                      : user.map_home
+                        ? "Обновить район"
+                        : "Сохранить район"}
+                  </Button>
+                  {user.map_home && (
+                    <Button
+                      type="button"
+                      className="bg-canvas text-ink ring-1 ring-line"
+                      disabled={mapHome.isPending}
+                      onClick={() => mapHome.mutate(null)}
+                    >
+                      Удалить
+                    </Button>
+                  )}
+                </div>
+                {locationMessage && (
+                  <p className="mt-3 text-sm text-muted">{locationMessage}</p>
+                )}
+              </div>
+            </div>
+          </Card>
+        )}
         {user?.role !== "user" && (
           <Link
             className="mt-5 inline-block font-bold text-orange"

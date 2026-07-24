@@ -125,7 +125,14 @@ export const gamesApi = {
   leave: (id: number) => api(`/games/${id}/leave/`, { method: "POST" }),
 };
 
-export const authApi = { me: () => api<User>("/auth/me/") };
+export const authApi = {
+  me: () => api<User>("/auth/me/"),
+  updateMapHome: (location: { lat: number; lon: number } | null) =>
+    api<User>("/auth/map-home/", {
+      method: "PATCH",
+      body: JSON.stringify(location ? { location } : { clear: true }),
+    }),
+};
 
 export async function telegramLogin(initData: string): Promise<User> {
   const result = await requestApi<{ access: string; user: User }>(

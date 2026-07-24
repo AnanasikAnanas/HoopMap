@@ -16,7 +16,7 @@ import { z } from "zod";
 import { CourtsMap } from "@/components/courts-map";
 import { Header } from "@/components/header";
 import { Button, Card, Input } from "@/components/ui";
-import { courtsApi } from "@/lib/api";
+import { ApiError, courtsApi } from "@/lib/api";
 
 const schema = z.object({
   name: z.string().min(3, "Минимум 3 символа"),
@@ -76,10 +76,13 @@ export default function AddCourtPage() {
       return court;
     },
     onSuccess: (court) => router.push(`/courts/${court.slug}`),
-    onError: () =>
-      setError(
-        "Не удалось отправить площадку. Проверьте авторизацию и поля формы.",
-      ),
+    onError: (cause) => {
+      if (cause instanceof ApiError && cause.status === 401) {
+        router.push("/login?next=/courts/add");
+        return;
+      }
+      setError("Не удалось отправить площадку. Проверьте поля формы.");
+    },
   });
   const values = useWatch({ control });
   const next = async () => {
