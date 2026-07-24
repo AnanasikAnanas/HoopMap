@@ -54,4 +54,43 @@ describe("API session security", () => {
       expect.objectContaining({ credentials: "include", method: "POST" }),
     );
   });
+
+  it("keeps email login tokens out of browser storage", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          requires_confirmation: false,
+          access: "short-lived-email-access",
+          user: {
+            id: 2,
+            telegram_id: null,
+            username: "player_email",
+            first_name: "Player",
+            last_name: "",
+            avatar_url: "",
+            role: "user",
+            reputation: 0,
+            map_home: null,
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { emailLogin } = await import("@/lib/api");
+
+    await emailLogin({
+      email: "player@example.com",
+      password: "basketball2026",
+    });
+
+    expect(localStorage.length).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/auth/email/login/"),
+      expect.objectContaining({
+        credentials: "include",
+        method: "POST",
+      }),
+    );
+  });
 });

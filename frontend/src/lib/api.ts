@@ -147,6 +147,47 @@ export async function telegramLogin(initData: string): Promise<User> {
   return result.user;
 }
 
+export type EmailRegistrationResult =
+  | { requires_confirmation: true; message: string }
+  | { requires_confirmation: false; access: string; user: User };
+
+export async function emailRegister(input: {
+  email: string;
+  password: string;
+  name: string;
+}): Promise<EmailRegistrationResult> {
+  const result = await requestApi<EmailRegistrationResult>(
+    "/auth/email/register/",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+    false,
+  );
+  if (!result.requires_confirmation) setAccessToken(result.access);
+  return result;
+}
+
+export async function emailLogin(input: {
+  email: string;
+  password: string;
+}): Promise<User> {
+  const result = await requestApi<{
+    requires_confirmation: false;
+    access: string;
+    user: User;
+  }>(
+    "/auth/email/login/",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+    false,
+  );
+  setAccessToken(result.access);
+  return result.user;
+}
+
 export async function restoreSession(): Promise<boolean> {
   return Boolean(await refreshAccessToken());
 }

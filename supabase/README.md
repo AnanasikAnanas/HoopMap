@@ -38,12 +38,33 @@ Storage bucket `hoopmap-media` создаётся SQL-скриптом авто�
 2. В **Root Directory** укажите `frontend`.
 3. Framework оставьте `Next.js`.
 4. Добавьте все переменные из `frontend/.env.vercel.example`, подставив реальные значения.
+   `SITE_URL` должен быть равен production-адресу сайта, например
+   `https://hoop-map.vercel.app`.
 5. Нажмите **Deploy**.
 
 Отдельный Vercel-проект для `backend` создавать не нужно. `NEXT_PUBLIC_API_URL` должен оставаться
 равным `/api/v1`.
 
-## 4. Telegram
+## 4. Вход по email без Telegram
+
+Email-аккаунты используют Supabase Auth и обычную таблицу `profiles`. Поле `telegram_id` у них
+остаётся пустым, поэтому Telegram для регистрации и работы сайта не нужен.
+
+1. В Supabase откройте **Authentication → Providers → Email** и включите Email provider.
+2. Для безопасной регистрации оставьте включённым **Confirm email**.
+3. Откройте **Authentication → URL Configuration**:
+   - **Site URL**: `https://YOUR_PROJECT.vercel.app`;
+   - **Redirect URLs**: добавьте `https://YOUR_PROJECT.vercel.app/login`.
+4. В Vercel задайте `SITE_URL=https://YOUR_PROJECT.vercel.app` и выполните Redeploy.
+
+После регистрации пользователь получает письмо Supabase, подтверждает адрес и входит с паролем.
+Пароль не записывается в таблицы HOOPMAP. В API хранится только короткоживущий access token в
+памяти страницы, а refresh token помещается в `HttpOnly` cookie.
+
+Для локальной разработки добавьте `http://localhost:3000/login` в Redirect URLs и установите
+`SITE_URL=http://localhost:3000` в `frontend/.env.local`.
+
+## 5. Telegram
 
 После первого deployment:
 
@@ -85,12 +106,13 @@ Storage bucket `hoopmap-media` создаётся SQL-скриптом авто�
 `TELEGRAM_LOGIN_CLIENT_SECRET`, как и токен бота, является серверным секретом. Его нельзя
 добавлять в `NEXT_PUBLIC_*`, GitHub или клиентский код.
 
-## 5. Первый администратор
+## 6. Первый администратор
 
-Сначала откройте сайт через Telegram Mini App хотя бы один раз. Затем в Supabase:
+Сначала создайте аккаунт по email или откройте сайт через Telegram Mini App хотя бы один раз.
+Затем в Supabase:
 
 1. Откройте **Table Editor → profiles**.
-2. Найдите себя по `telegram_id`.
+2. Найдите свой профиль по имени или `telegram_id`.
 3. Поменяйте `role` с `user` на `admin`.
 
 После этого появится доступ к `/moderation`.
@@ -102,7 +124,7 @@ Storage bucket `hoopmap-media` создаётся SQL-скриптом авто�
 геопозицию. Настройку можно обновить или удалить в профиле. Без явного нажатия пользователя
 координаты в Supabase не отправляются.
 
-## 6. Импорт собственной карты из Яндекса
+## 7. Импорт собственной карты из Яндекса
 
 Дополнительные ключи API не нужны:
 
@@ -123,6 +145,7 @@ Storage bucket `hoopmap-media` создаётся SQL-скриптом авто�
 ## Проверка
 
 - `/api/telegram/webhook` возвращает JSON с `ok: true`;
+- `/login` позволяет создать независимый email-аккаунт и войти после подтверждения адреса;
 - `/login` открывает Telegram Web Login, после входа `/profile` показывает тот же аккаунт;
 - карта показывает данные из `seed.sql`;
 - новая площадка получает статус `pending`;

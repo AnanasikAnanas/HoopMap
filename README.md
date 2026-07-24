@@ -26,6 +26,7 @@ flowchart LR
 - геопоиск PostGIS и сортировка по расстоянию;
 - добавление площадок и фотографий с модерацией;
 - защищённый импорт собственных CSV/GeoJSON-карт из Яндекс Конструктора;
+- независимая регистрация по email и паролю через Supabase Auth;
 - безопасная проверка Telegram `initData`;
 - единый Telegram-профиль для Mini App и обычного сайта через OpenID Connect;
 - Supabase Auth sessions: access token в памяти, refresh token в `HttpOnly` cookie;
@@ -93,6 +94,8 @@ basketball-courts/
 POST   /auth/telegram/
 GET    /auth/telegram/start/
 GET    /auth/telegram/callback/
+POST   /auth/email/register/
+POST   /auth/email/login/
 POST   /auth/refresh/
 POST   /auth/logout/
 PATCH  /auth/map-home/

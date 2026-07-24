@@ -3,13 +3,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Heart, MapPin, MapPinned, Trophy } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Header, MobileNav } from "@/components/header";
 import { Button, Card } from "@/components/ui";
-import { authApi } from "@/lib/api";
+import { authApi, logout } from "@/lib/api";
 
 export default function ProfilePage() {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const [locationMessage, setLocationMessage] = useState("");
   const [locating, setLocating] = useState(false);
   const { data: user, isError } = useQuery({
@@ -28,6 +30,13 @@ export default function ProfilePage() {
       );
     },
     onError: () => setLocationMessage("Не удалось обновить настройку."),
+  });
+  const signOut = useMutation({
+    mutationFn: logout,
+    onSuccess: () => {
+      queryClient.clear();
+      router.replace("/login");
+    },
   });
   const saveCurrentArea = () => {
     setLocationMessage("");
@@ -74,7 +83,7 @@ export default function ProfilePage() {
             {user
               ? `Репутация: ${user.reputation} · ${user.role}`
               : isError
-                ? "Войдите через Telegram, чтобы открыть единый профиль"
+                ? "Войдите или создайте аккаунт, чтобы открыть профиль"
                 : "Загружаем профиль…"}
           </p>
           {isError && (
@@ -82,8 +91,18 @@ export default function ProfilePage() {
               href="/login?next=/profile"
               className="mt-5 inline-flex min-h-11 items-center rounded-full bg-orange px-5 text-sm font-bold text-white"
             >
-              Войти через Telegram
+              Войти или зарегистрироваться
             </Link>
+          )}
+          {user && (
+            <Button
+              type="button"
+              className="mt-5 bg-white/10 text-white ring-1 ring-white/20 hover:bg-white/20"
+              disabled={signOut.isPending}
+              onClick={() => signOut.mutate()}
+            >
+              {signOut.isPending ? "Выходим…" : "Выйти"}
+            </Button>
           )}
         </div>
         <div className="mt-6 grid gap-4 md:grid-cols-3">

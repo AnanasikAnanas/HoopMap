@@ -18,6 +18,11 @@ import {
   validateTelegramInitData,
 } from "@/lib/supabase/telegram-auth";
 import {
+  emailLoginSchema,
+  emailRegistrationSchema,
+  ensureEmailProfile,
+} from "@/lib/supabase/email-auth";
+import {
   createTelegramOidcAttempt,
   exchangeTelegramCode,
   telegramLoginConfig,
@@ -818,6 +823,111 @@ async function authTelegram(request: NextRequest) {
   return response;
 }
 
+function emailConfirmationRedirect(request: NextRequest): string {
+  const configured =
+    process.env.SITE_URL?.trim() || process.env.TELEGRAM_WEBAPP_URL?.trim();
+  if (!configured && process.env.NODE_ENV === "production") {
+    throw new Error("SITE_URL is not configured");
+  }
+  const base = new URL(configured || request.nextUrl.origin);
+  if (process.env.NODE_ENV === "production" && base.protocol !== "https:") {
+    throw new Error("SITE_URL must use HTTPS");
+  }
+  return new URL("/login?confirmed=1", base).toString();
+}
+
+function sessionResponse(
+  accessToken: string,
+  refreshToken: string,
+  profile: Awaited<ReturnType<typeof ensureEmailProfile>>,
+) {
+  const response = json({
+    access: accessToken,
+    user: privateUser(profile),
+    requires_confirmation: false,
+  });
+  response.cookies.set(
+    refreshCookieName(),
+    refreshToken,
+    refreshCookieOptions(),
+  );
+  return response;
+}
+
+async function authEmailRegister(request: NextRequest) {
+  await rateLimit(request, "email-register", 5, 3600);
+  const parsed = emailRegistrationSchema.safeParse(await body(request));
+  if (!parsed.success) {
+    throw new HttpError(
+      400,
+      parsed.error.issues[0]?.message ?? "Проверьте данные регистрации",
+    );
+  }
+
+  const client = createRequestClient();
+  const confirmationResponse = () =>
+    json(
+      {
+        requires_confirmation: true,
+        message:
+          "Если адрес доступен для регистрации, на него отправлено письмо. Подтвердите email и войдите с паролем.",
+      },
+      202,
+    );
+  const registered = await client.auth.signUp({
+    email: parsed.data.email,
+    password: parsed.data.password,
+    options: {
+      emailRedirectTo: emailConfirmationRedirect(request),
+      data: {
+        provider: "email",
+        display_name: parsed.data.name,
+      },
+    },
+  });
+  if (registered.error) {
+    const duplicate = /already registered|already exists/i.test(
+      registered.error.message,
+    );
+    if (!duplicate) {
+      throw new HttpError(400, "Не удалось создать аккаунт");
+    }
+  }
+
+  const authUser = registered.data.user;
+  const isNewIdentity = Boolean(authUser?.identities?.length);
+  if (!authUser || !isNewIdentity) return confirmationResponse();
+
+  const profile = await ensureEmailProfile(authUser, parsed.data.name);
+  const session = registered.data.session;
+  if (!session) return confirmationResponse();
+  return sessionResponse(
+    session.access_token,
+    session.refresh_token,
+    profile,
+  );
+}
+
+async function authEmailLogin(request: NextRequest) {
+  await rateLimit(request, "email-login", 10, 900);
+  const parsed = emailLoginSchema.safeParse(await body(request));
+  if (!parsed.success) {
+    throw new HttpError(400, "Проверьте email и пароль");
+  }
+  const signedIn = await createRequestClient().auth.signInWithPassword(
+    parsed.data,
+  );
+  if (signedIn.error || !signedIn.data.user || !signedIn.data.session) {
+    throw new HttpError(401, "Неверный email или пароль");
+  }
+  const profile = await ensureEmailProfile(signedIn.data.user);
+  return sessionResponse(
+    signedIn.data.session.access_token,
+    signedIn.data.session.refresh_token,
+    profile,
+  );
+}
+
 async function authRefresh(request: NextRequest) {
   const refreshToken = request.cookies.get(refreshCookieName())?.value;
   if (!refreshToken) throw new HttpError(401, "Сессия не найдена");
@@ -1002,6 +1112,12 @@ async function dispatch(request: NextRequest, segments: string[]): Promise<NextR
       request.method === "GET"
     ) {
       return finishTelegramWebLogin(request);
+    }
+    if (lookup === "email" && action === "register" && request.method === "POST") {
+      return authEmailRegister(request);
+    }
+    if (lookup === "email" && action === "login" && request.method === "POST") {
+      return authEmailLogin(request);
     }
     if (lookup === "refresh" && request.method === "POST") return authRefresh(request);
     if (lookup === "logout" && request.method === "POST") return authLogout();
