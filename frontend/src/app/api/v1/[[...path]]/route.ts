@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from "next/server";
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { z } from "zod";
 import {
   bearerToken,
@@ -296,6 +296,169 @@ async function createCourt(request: NextRequest) {
     .single();
   if (inserted.error) throw inserted.error;
   return json(serializeCourt(await oneCourt(current!.client, String(inserted.data.id))), 201);
+}
+
+const importCourtInput = z.object({
+  external_id: z.string().trim().max(200).optional(),
+  name: z.string().trim().min(3).max(180),
+  description: z.string().trim().max(3000).default(""),
+  address: z.string().trim().max(300).default(""),
+  lat: z.number().min(-90).max(90),
+  lon: z.number().min(-180).max(180),
+});
+
+const importCourtsInput = z.object({
+  rights_confirmed: z.literal(true),
+  city: z.string().trim().min(2).max(120),
+  country: z.string().trim().min(2).max(120).default("Россия"),
+  court_type: z
+    .enum(["full", "half", "single_hoop", "indoor", "outdoor"])
+    .default("outdoor"),
+  access_type: z
+    .enum(["free", "restricted", "paid", "private"])
+    .default("free"),
+  surface: z
+    .enum(["asphalt", "rubber", "concrete", "parquet", "other"])
+    .default("other"),
+  hoops_count: z.number().int().min(1).max(20).default(2),
+  courts: z.array(importCourtInput).min(1).max(200),
+});
+
+function distanceMeters(
+  first: { lat: number; lon: number },
+  second: { lat: number; lon: number },
+): number {
+  const radians = (degrees: number) => (degrees * Math.PI) / 180;
+  const earthRadius = 6_371_000;
+  const deltaLat = radians(second.lat - first.lat);
+  const deltaLon = radians(second.lon - first.lon);
+  const value =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(radians(first.lat)) *
+      Math.cos(radians(second.lat)) *
+      Math.sin(deltaLon / 2) ** 2;
+  return 2 * earthRadius * Math.asin(Math.sqrt(value));
+}
+
+function importSourceId(
+  court: z.infer<typeof importCourtInput>,
+  city: string,
+): string {
+  const stable = [
+    court.external_id || "",
+    court.name.toLocaleLowerCase("ru-RU").replace(/\s+/g, " "),
+    city.toLocaleLowerCase("ru-RU"),
+    court.lat.toFixed(6),
+    court.lon.toFixed(6),
+  ].join("|");
+  return createHash("sha256").update(stable).digest("hex").slice(0, 40);
+}
+
+async function importCourts(request: NextRequest) {
+  const current = await identity(request, true);
+  if (!isModerator(current!.profile)) throw new HttpError(403, "Недостаточно прав");
+  await rateLimit(request, "court-import", 5, 3600, current!.profile.id);
+  const parsed = importCourtsInput.safeParse(await body(request));
+  if (!parsed.success) {
+    throw new HttpError(
+      400,
+      "Проверьте параметры импорта",
+      parsed.error.flatten(),
+    );
+  }
+  const value = parsed.data;
+  const prepared = value.courts.map((court) => ({
+    ...court,
+    sourceId: importSourceId(court, value.city),
+  }));
+  const sourceIds = Array.from(new Set(prepared.map((court) => court.sourceId)));
+  const existingBySource = await current!.client
+    .from("courts")
+    .select("source_id")
+    .eq("source", "yandex_constructor")
+    .in("source_id", sourceIds);
+  if (existingBySource.error) throw existingBySource.error;
+  const knownSourceIds = new Set(
+    (existingBySource.data ?? []).map((court) => String(court.source_id)),
+  );
+
+  const latitudes = prepared.map((court) => court.lat);
+  const longitudes = prepared.map((court) => court.lon);
+  const coordinatePadding = 0.001;
+  const nearby = await current!.client
+    .from("courts")
+    .select("id,latitude,longitude")
+    .gte("latitude", Math.min(...latitudes) - coordinatePadding)
+    .lte("latitude", Math.max(...latitudes) + coordinatePadding)
+    .gte("longitude", Math.min(...longitudes) - coordinatePadding)
+    .lte("longitude", Math.max(...longitudes) + coordinatePadding)
+    .limit(5000);
+  if (nearby.error) throw nearby.error;
+  const occupied = (nearby.data ?? []).map((court) => ({
+    lat: Number(court.latitude),
+    lon: Number(court.longitude),
+  }));
+
+  let duplicateSource = 0;
+  let duplicateLocation = 0;
+  const rows: Record<string, unknown>[] = [];
+  for (const court of prepared) {
+    if (knownSourceIds.has(court.sourceId)) {
+      duplicateSource += 1;
+      continue;
+    }
+    if (
+      occupied.some(
+        (candidate) =>
+          distanceMeters(candidate, { lat: court.lat, lon: court.lon }) <= 50,
+      )
+    ) {
+      duplicateLocation += 1;
+      continue;
+    }
+    occupied.push({ lat: court.lat, lon: court.lon });
+    knownSourceIds.add(court.sourceId);
+    rows.push({
+      name: court.name,
+      slug: slugify(court.name),
+      description: court.description,
+      address:
+        court.address ||
+        `Координаты ${court.lat.toFixed(6)}, ${court.lon.toFixed(6)}`,
+      city: value.city,
+      country: value.country,
+      latitude: court.lat,
+      longitude: court.lon,
+      court_type: value.court_type,
+      access_type: value.access_type,
+      surface: value.surface,
+      hoops_count: value.hoops_count,
+      has_lighting: false,
+      has_marking: true,
+      has_nets: false,
+      condition: "unknown",
+      status: "pending",
+      source: "yandex_constructor",
+      source_id: court.sourceId,
+      created_by: current!.profile.id,
+    });
+  }
+
+  if (rows.length) {
+    const inserted = await current!.client.from("courts").insert(rows);
+    if (inserted.error) throw inserted.error;
+  }
+  return json(
+    {
+      received: prepared.length,
+      imported: rows.length,
+      skipped: duplicateSource + duplicateLocation,
+      skipped_by_source: duplicateSource,
+      skipped_by_distance: duplicateLocation,
+      status: "pending",
+    },
+    201,
+  );
 }
 
 const photoPrepare = z.object({
@@ -679,6 +842,7 @@ async function dispatch(request: NextRequest, segments: string[]): Promise<NextR
     if (!lookup && request.method === "GET") return listCourts(request);
     if (!lookup && request.method === "POST") return createCourt(request);
     if (lookup === "nearby" && request.method === "GET") return nearbyCourts(request);
+    if (lookup === "import" && request.method === "POST") return importCourts(request);
     if (lookup && !action && request.method === "GET") {
       const { client } = await clientFor(request);
       return json(serializeCourt(await oneCourt(client, lookup)));

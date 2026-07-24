@@ -1,4 +1,6 @@
 "use client";
+import Link from "next/link";
+import { FileUp } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Header } from "@/components/header";
 import { Button, Card } from "@/components/ui";
@@ -24,7 +26,15 @@ export default function ModerationPage() {
         <p className="text-xs font-bold uppercase tracking-widest text-orange">
           Служебный раздел
         </p>
-        <h1 className="display mt-2 text-3xl">Модерация</h1>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-4">
+          <h1 className="display text-3xl">Модерация</h1>
+          <Link
+            href="/moderation/import"
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-line bg-surface px-5 text-sm font-bold transition hover:border-orange hover:text-orange"
+          >
+            <FileUp size={18} /> Импорт площадок
+          </Link>
+        </div>
         {isError && (
           <p className="mt-6 rounded-xl bg-danger/10 p-4 text-danger">
             Раздел доступен только модераторам.

@@ -43,17 +43,22 @@ export function CourtsMap({
   onSelect,
   pickLocation,
   picked,
+  userLocation,
 }: {
   courts: Court[];
   onBounds?: (bounds: Bounds) => void;
   onSelect?: (id: number) => void;
   pickLocation?: (location: { lat: number; lon: number }) => void;
   picked?: { lat: number; lon: number };
+  userLocation?: { lat: number; lon: number };
 }) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const pickedMarker = useRef<Marker | null>(null);
+  const userMarker = useRef<Marker | null>(null);
+  const userMovedMap = useRef(false);
   const latestCourts = useRef(courts);
+  const latestUserLocation = useRef(userLocation);
   const latestBounds = useRef(onBounds);
   const latestSelect = useRef(onSelect);
   const latestPick = useRef(pickLocation);
@@ -62,7 +67,8 @@ export function CourtsMap({
     latestSelect.current = onSelect;
     latestPick.current = pickLocation;
     latestCourts.current = courts;
-  }, [onBounds, onSelect, pickLocation, courts]);
+    latestUserLocation.current = userLocation;
+  }, [onBounds, onSelect, pickLocation, courts, userLocation]);
 
   useEffect(() => {
     if (!container.current || map.current) return;
@@ -74,10 +80,23 @@ export function CourtsMap({
         style:
           process.env.NEXT_PUBLIC_MAP_STYLE_URL ??
           "https://tiles.openfreemap.org/styles/liberty",
-        center: [49.4, 53.5],
-        zoom: 11,
+        center: latestUserLocation.current
+          ? [
+              latestUserLocation.current.lon,
+              latestUserLocation.current.lat,
+            ]
+          : [49.4, 53.5],
+        zoom: latestUserLocation.current ? 13 : 11,
       });
       map.current = instance;
+      if (latestUserLocation.current) {
+        userMarker.current = new maplibregl.Marker({ color: "#2780E3" })
+          .setLngLat([
+            latestUserLocation.current.lon,
+            latestUserLocation.current.lat,
+          ])
+          .addTo(instance);
+      }
       instance.addControl(
         new maplibregl.NavigationControl({ showCompass: false }),
         "top-right",
@@ -169,6 +188,9 @@ export function CourtsMap({
           maxLat: bounds.getNorth(),
         });
       });
+      instance.on("dragstart", () => {
+        userMovedMap.current = true;
+      });
       instance.on("click", (event) =>
         latestPick.current?.({ lat: event.lngLat.lat, lon: event.lngLat.lng }),
       );
@@ -176,6 +198,7 @@ export function CourtsMap({
     return () => {
       active = false;
       pickedMarker.current?.remove();
+      userMarker.current?.remove();
       map.current?.remove();
       map.current = null;
     };
@@ -186,6 +209,23 @@ export function CourtsMap({
       GeoJSONSource | undefined;
     source?.setData(courtGeoJson(courts));
   }, [courts]);
+
+  useEffect(() => {
+    if (!userLocation || !map.current) return;
+    void import("maplibre-gl").then(({ default: maplibregl }) => {
+      if (!map.current) return;
+      userMarker.current?.remove();
+      userMarker.current = new maplibregl.Marker({ color: "#2780E3" })
+        .setLngLat([userLocation.lon, userLocation.lat])
+        .addTo(map.current);
+      if (!userMovedMap.current) {
+        map.current.easeTo({
+          center: [userLocation.lon, userLocation.lat],
+          zoom: Math.max(map.current.getZoom(), 13),
+        });
+      }
+    });
+  }, [userLocation]);
 
   useEffect(() => {
     if (!picked || !map.current) return;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { SlidersHorizontal } from "lucide-react";
 import { CourtsMap } from "@/components/courts-map";
@@ -13,6 +13,10 @@ import { useMapStore } from "@/store/map";
 export default function MapPage() {
   const [bbox, setBbox] = useState("48.9,53.2,49.9,53.8");
   const [search, setSearch] = useState("");
+  const [userLocation, setUserLocation] = useState<{
+    lat: number;
+    lon: number;
+  }>();
   const { selectedCourtId, selectCourt, filters, setFilters } = useMapStore();
   const query = useMemo(() => {
     const p = new URLSearchParams({ bbox, page_size: "100" });
@@ -37,6 +41,23 @@ export default function MapPage() {
       setBbox(`${b.minLon},${b.minLat},${b.maxLon},${b.maxLat}`),
     [],
   );
+  useEffect(() => {
+    if (!("geolocation" in navigator)) return;
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setUserLocation({
+          lat: position.coords.latitude,
+          lon: position.coords.longitude,
+        });
+      },
+      () => undefined,
+      {
+        enableHighAccuracy: false,
+        timeout: 10_000,
+        maximumAge: 5 * 60_000,
+      },
+    );
+  }, []);
   return (
     <div className="h-dvh overflow-hidden">
       <Header />
@@ -94,6 +115,7 @@ export default function MapPage() {
             courts={visible}
             onBounds={onBounds}
             onSelect={selectCourt}
+            userLocation={userLocation}
           />
           {selected && (
             <div className="absolute inset-x-3 bottom-20 z-20 md:bottom-4 md:left-auto md:w-96">
