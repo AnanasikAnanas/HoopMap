@@ -3,13 +3,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MapPinned, SlidersHorizontal, X } from "lucide-react";
+import { BasketballLoader } from "@/components/basketball-feedback";
 import { CourtsMap } from "@/components/courts-map";
 import { CourtCard } from "@/components/court-card";
 import { Header, MobileNav } from "@/components/header";
 import { MapFilterPanel } from "@/components/map-filter-panel";
 import { Button, Input } from "@/components/ui";
 import { authApi, courtsApi } from "@/lib/api";
+import {
+  hapticImpact,
+  hapticNotification,
+  hapticSelection,
+} from "@/lib/haptics";
 import { useMapStore } from "@/store/map";
+import { useToast } from "@/components/toast";
 
 export default function MapPage() {
   const [bbox, setBbox] = useState("48.9,53.2,49.9,53.8");
@@ -22,6 +29,7 @@ export default function MapPage() {
   const [dismissLocationSave, setDismissLocationSave] = useState(false);
   const [locationSaveError, setLocationSaveError] = useState("");
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
   const { data: user } = useQuery({
     queryKey: ["me"],
     queryFn: authApi.me,
@@ -32,11 +40,16 @@ export default function MapPage() {
     onSuccess: (updated) => {
       queryClient.setQueryData(["me"], updated);
       setDismissLocationSave(true);
+      hapticNotification("success");
+      showToast("Стартовый район сохранён", { tone: "success" });
     },
-    onError: () =>
+    onError: () => {
+      hapticNotification("error");
+      showToast("Не удалось сохранить стартовый район", { tone: "error" });
       setLocationSaveError(
         "Не удалось сохранить район. Проверьте вход в профиль.",
-      ),
+      );
+    },
   });
   const { selectedCourtId, selectCourt, filters, setFilters } = useMapStore();
   const activeFilterCount = [
@@ -44,8 +57,23 @@ export default function MapPage() {
     filters.condition,
     filters.hasLighting,
   ].filter(Boolean).length;
-  const resetFilters = () =>
+  const resetFilters = () => {
+    hapticImpact("light");
     setFilters({ surface: "", condition: "", hasLighting: false });
+  };
+  const updateFilters = (next: Parameters<typeof setFilters>[0]) => {
+    hapticSelection();
+    setFilters(next);
+  };
+  const toggleFilters = () => {
+    hapticImpact("light");
+    setFiltersOpen((open) => !open);
+  };
+  const handleCourtSelect = (id: number | null) => {
+    if (id == null) hapticImpact("light");
+    else hapticSelection();
+    selectCourt(id);
+  };
   const query = useMemo(() => {
     const p = new URLSearchParams({ bbox, page_size: "100" });
     if (filters.surface) p.set("surface", filters.surface);
@@ -53,7 +81,7 @@ export default function MapPage() {
     if (filters.hasLighting) p.set("has_lighting", "true");
     return p.toString();
   }, [bbox, filters]);
-  const { data: courtPage } = useQuery({
+  const { data: courtPage, isLoading: courtsLoading } = useQuery({
     queryKey: ["courts", query],
     queryFn: () => courtsApi.list(query),
   });
@@ -106,7 +134,7 @@ export default function MapPage() {
               aria-label="Фильтры"
               aria-expanded={filtersOpen}
               aria-controls="desktop-map-filters"
-              onClick={() => setFiltersOpen((open) => !open)}
+              onClick={toggleFilters}
               className={`relative rounded-xl border px-4 transition active:scale-95 ${
                 filtersOpen || activeFilterCount
                   ? "border-orange bg-orange text-white"
@@ -133,7 +161,7 @@ export default function MapPage() {
                 id="desktop-map-filters"
                 className="shadow-md"
                 filters={filters}
-                onChange={setFilters}
+                onChange={updateFilters}
                 onReset={resetFilters}
               />
             </div>
@@ -147,7 +175,7 @@ export default function MapPage() {
                 key={court.id}
                 court={court}
                 compact
-                onClick={() => selectCourt(court.id)}
+                onClick={() => handleCourtSelect(court.id)}
               />
             ))}
           </div>
@@ -156,11 +184,16 @@ export default function MapPage() {
           <CourtsMap
             courts={visible}
             onBounds={onBounds}
-            onSelect={selectCourt}
+            onSelect={handleCourtSelect}
             initialCenter={userLocation ?? user?.map_home ?? undefined}
             userLocation={userLocation}
             selectedCourtId={selectedCourtId}
           />
+          {courtsLoading && !courtPage && (
+            <div className="pointer-events-none absolute inset-0 z-[5] grid place-items-center bg-canvas/20">
+              <BasketballLoader label="Ищем площадки" />
+            </div>
+          )}
           {userLocation &&
             user &&
             !user.map_home &&
@@ -208,7 +241,7 @@ export default function MapPage() {
                 <button
                   type="button"
                   aria-label="Закрыть карточку площадки"
-                  onClick={() => selectCourt(null)}
+                  onClick={() => handleCourtSelect(null)}
                   className="absolute right-0 top-0 grid h-8 w-8 place-items-center rounded-full text-muted transition hover:bg-canvas hover:text-ink active:scale-90"
                 >
                   <X size={18} />
@@ -233,7 +266,7 @@ export default function MapPage() {
               aria-label="Фильтры"
               aria-expanded={filtersOpen}
               aria-controls="mobile-map-filters"
-              onClick={() => setFiltersOpen((open) => !open)}
+              onClick={toggleFilters}
               className={`relative rounded-xl px-4 text-white shadow-lg transition active:scale-95 ${
                 filtersOpen || activeFilterCount ? "bg-orange" : "bg-dark"
               }`}
@@ -256,7 +289,7 @@ export default function MapPage() {
             <MapFilterPanel
               id="mobile-map-filters"
               filters={filters}
-              onChange={setFilters}
+              onChange={updateFilters}
               onReset={resetFilters}
             />
           </div>

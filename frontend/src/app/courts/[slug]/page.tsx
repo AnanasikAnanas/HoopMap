@@ -11,14 +11,18 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import { useParams } from "next/navigation";
+import { BasketballLoader } from "@/components/basketball-feedback";
 import { Header, MobileNav } from "@/components/header";
+import { useToast } from "@/components/toast";
 import { Badge, Button, Card } from "@/components/ui";
 import { courtsApi, gamesApi } from "@/lib/api";
+import { hapticNotification } from "@/lib/haptics";
 import { formatDate } from "@/lib/utils";
 
 export default function CourtPage() {
   const { slug } = useParams<{ slug: string }>();
   const client = useQueryClient();
+  const { showToast } = useToast();
   const {
     data: court,
     isLoading,
@@ -34,17 +38,42 @@ export default function CourtPage() {
   });
   const favorite = useMutation({
     mutationFn: () => courtsApi.favorite(court!.id, !court!.is_favorite),
-    onSuccess: () => client.invalidateQueries({ queryKey: ["court", slug] }),
+    onSuccess: () => {
+      hapticNotification("success");
+      showToast(
+        court!.is_favorite
+          ? "Удалено из избранного"
+          : "Площадка добавлена в избранное",
+        { tone: "success" },
+      );
+      return client.invalidateQueries({ queryKey: ["court", slug] });
+    },
+    onError: () => {
+      hapticNotification("error");
+      showToast("Не удалось изменить избранное", { tone: "error" });
+    },
   });
   const verify = useMutation({
     mutationFn: () => courtsApi.verify(court!.id),
-    onSuccess: () => client.invalidateQueries({ queryKey: ["court", slug] }),
+    onSuccess: () => {
+      hapticNotification("success");
+      showToast("Спасибо! Актуальность площадки подтверждена", {
+        tone: "success",
+      });
+      return client.invalidateQueries({ queryKey: ["court", slug] });
+    },
+    onError: () => {
+      hapticNotification("error");
+      showToast("Не удалось подтвердить площадку", { tone: "error" });
+    },
   });
   if (isLoading)
     return (
       <>
         <Header />
-        <main className="p-10 text-center">Загружаем площадку…</main>
+        <main className="grid min-h-[60dvh] place-items-center p-10">
+          <BasketballLoader label="Загружаем площадку" />
+        </main>
       </>
     );
   if (error || !court)
@@ -165,6 +194,7 @@ export default function CourtPage() {
             <Button
               className="w-full bg-surface text-ink ring-1 ring-line"
               onClick={() => favorite.mutate()}
+              disabled={favorite.isPending}
             >
               <Heart
                 className={court.is_favorite ? "fill-danger text-danger" : ""}

@@ -3,14 +3,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, MapPin, Users } from "lucide-react";
 import { useParams } from "next/navigation";
+import { BasketballLoader } from "@/components/basketball-feedback";
 import { Header, MobileNav } from "@/components/header";
+import { useToast } from "@/components/toast";
 import { Button, Card } from "@/components/ui";
 import { gamesApi } from "@/lib/api";
+import { hapticNotification } from "@/lib/haptics";
 import { formatDate } from "@/lib/utils";
 
 export default function GamePage() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();
+  const { showToast } = useToast();
   const { data: game, isLoading } = useQuery({
     queryKey: ["game", id],
     queryFn: () => gamesApi.one(id),
@@ -18,13 +22,26 @@ export default function GamePage() {
   const membership = useMutation({
     mutationFn: () =>
       game!.is_joined ? gamesApi.leave(game!.id) : gamesApi.join(game!.id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["game", id] }),
+    onSuccess: () => {
+      hapticNotification("success");
+      showToast(
+        game!.is_joined ? "Вы вышли из игры" : "Вы присоединились к игре",
+        { tone: "success" },
+      );
+      return qc.invalidateQueries({ queryKey: ["game", id] });
+    },
+    onError: () => {
+      hapticNotification("error");
+      showToast("Не удалось изменить участие в игре", { tone: "error" });
+    },
   });
   if (isLoading)
     return (
       <>
         <Header />
-        <main className="p-10 text-center">Загружаем игру…</main>
+        <main className="grid min-h-[60dvh] place-items-center p-10">
+          <BasketballLoader label="Загружаем игру" />
+        </main>
       </>
     );
   if (!game)

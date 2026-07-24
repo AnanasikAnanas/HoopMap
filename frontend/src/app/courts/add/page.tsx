@@ -10,13 +10,22 @@ import {
   MapPin,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { CourtsMap } from "@/components/courts-map";
+import {
+  ActionSuccess,
+  BasketballLoader,
+} from "@/components/basketball-feedback";
 import { Header } from "@/components/header";
+import { useToast } from "@/components/toast";
 import { Button, Card, Input } from "@/components/ui";
 import { ApiError, courtsApi } from "@/lib/api";
+import {
+  hapticNotification,
+  hapticSelection,
+} from "@/lib/haptics";
 
 const schema = z.object({
   name: z.string().min(3, "Минимум 3 символа"),
@@ -41,6 +50,8 @@ export default function AddCourtPage() {
   const [location, setLocation] = useState<{ lat: number; lon: number }>();
   const [photo, setPhoto] = useState<File>();
   const [error, setError] = useState("");
+  const [createdCourtSlug, setCreatedCourtSlug] = useState("");
+  const { showToast } = useToast();
   const {
     register,
     handleSubmit,
@@ -75,19 +86,36 @@ export default function AddCourtPage() {
       if (photo) await courtsApi.uploadPhoto(court.id, photo);
       return court;
     },
-    onSuccess: (court) => router.push(`/courts/${court.slug}`),
+    onSuccess: (court) => {
+      hapticNotification("success");
+      showToast("Площадка отправлена на модерацию", { tone: "success" });
+      setCreatedCourtSlug(court.slug);
+    },
     onError: (cause) => {
+      hapticNotification("error");
       if (cause instanceof ApiError && cause.status === 401) {
+        showToast("Войдите, чтобы добавить площадку", { tone: "info" });
         router.push("/login?next=/courts/add");
         return;
       }
+      showToast("Не удалось отправить площадку", { tone: "error" });
       setError("Не удалось отправить площадку. Проверьте поля формы.");
     },
   });
+  useEffect(() => {
+    if (!createdCourtSlug) return;
+    const timer = window.setTimeout(
+      () => router.push(`/courts/${createdCourtSlug}`),
+      1_350,
+    );
+    return () => window.clearTimeout(timer);
+  }, [createdCourtSlug, router]);
   const values = useWatch({ control });
   const next = async () => {
-    if (step === 0 && !location)
+    if (step === 0 && !location) {
+      hapticNotification("warning");
       return setError("Нажмите на точку площадки на карте");
+    }
     if (
       step === 1 &&
       !(await trigger(["name", "address", "city", "country", "hoops_count"]))
@@ -124,7 +152,10 @@ export default function AddCourtPage() {
               <div className="h-[55vh]">
                 <CourtsMap
                   courts={[]}
-                  pickLocation={setLocation}
+                  pickLocation={(nextLocation) => {
+                    hapticSelection();
+                    setLocation(nextLocation);
+                  }}
                   picked={location}
                 />
               </div>
@@ -315,6 +346,19 @@ export default function AddCourtPage() {
           </div>
         </form>
       </main>
+      {create.isPending && (
+        <div className="fixed inset-0 z-[105] grid place-items-center bg-dark/60 p-5 backdrop-blur-sm">
+          <BasketballLoader
+            label={photo ? "Загружаем площадку и фото" : "Отправляем площадку"}
+          />
+        </div>
+      )}
+      {createdCourtSlug && (
+        <ActionSuccess
+          title="Точный бросок!"
+          description="Площадка отправлена на модерацию. Сейчас откроем её страницу."
+        />
+      )}
     </>
   );
 }

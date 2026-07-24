@@ -3,6 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { restoreSession, telegramLogin } from "@/lib/api";
+import { ToastProvider } from "@/components/toast";
 
 declare global {
   interface Window {
@@ -16,6 +17,13 @@ declare global {
           show(): void;
           hide(): void;
           onClick(fn: () => void): void;
+        };
+        HapticFeedback?: {
+          impactOccurred(
+            style: "light" | "medium" | "heavy" | "rigid" | "soft",
+          ): void;
+          notificationOccurred(type: "error" | "success" | "warning"): void;
+          selectionChanged(): void;
         };
         onEvent(event: "themeChanged", fn: () => void): void;
         offEvent(event: "themeChanged", fn: () => void): void;
@@ -81,5 +89,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
       window.removeEventListener("telegram-webapp-ready", initializeTelegram);
     };
   }, [client]);
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={client}>
+      <ToastProvider>{children}</ToastProvider>
+    </QueryClientProvider>
+  );
 }
