@@ -6,6 +6,7 @@ import { MapPinned, SlidersHorizontal } from "lucide-react";
 import { CourtsMap } from "@/components/courts-map";
 import { CourtCard } from "@/components/court-card";
 import { Header, MobileNav } from "@/components/header";
+import { MapFilterPanel } from "@/components/map-filter-panel";
 import { Button, Input } from "@/components/ui";
 import { authApi, courtsApi } from "@/lib/api";
 import { useMapStore } from "@/store/map";
@@ -13,6 +14,7 @@ import { useMapStore } from "@/store/map";
 export default function MapPage() {
   const [bbox, setBbox] = useState("48.9,53.2,49.9,53.8");
   const [search, setSearch] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [userLocation, setUserLocation] = useState<{
     lat: number;
     lon: number;
@@ -37,6 +39,13 @@ export default function MapPage() {
       ),
   });
   const { selectedCourtId, selectCourt, filters, setFilters } = useMapStore();
+  const activeFilterCount = [
+    filters.surface,
+    filters.condition,
+    filters.hasLighting,
+  ].filter(Boolean).length;
+  const resetFilters = () =>
+    setFilters({ surface: "", condition: "", hasLighting: false });
   const query = useMemo(() => {
     const p = new URLSearchParams({ bbox, page_size: "100" });
     if (filters.surface) p.set("surface", filters.surface);
@@ -89,32 +98,34 @@ export default function MapPage() {
               placeholder="Название или адрес"
             />
             <button
+              type="button"
               aria-label="Фильтры"
-              className="rounded-xl border border-line bg-surface px-4 text-ink"
+              aria-expanded={filtersOpen}
+              aria-controls="desktop-map-filters"
+              onClick={() => setFiltersOpen((open) => !open)}
+              className={`relative rounded-xl border px-4 transition ${
+                filtersOpen || activeFilterCount
+                  ? "border-orange bg-orange text-white"
+                  : "border-line bg-surface text-ink hover:border-orange hover:text-orange"
+              }`}
             >
               <SlidersHorizontal />
+              {activeFilterCount > 0 && (
+                <span className="absolute -right-2 -top-2 grid h-6 min-w-6 place-items-center rounded-full border-2 border-canvas bg-dark px-1 text-[11px] font-extrabold text-white">
+                  {activeFilterCount}
+                </span>
+              )}
             </button>
           </div>
-          <div className="mb-4 flex gap-2 overflow-x-auto">
-            <select
-              className="rounded-full border border-line bg-surface px-3 py-2 text-sm text-ink"
-              value={filters.surface}
-              onChange={(e) => setFilters({ surface: e.target.value })}
-            >
-              <option value="">Покрытие</option>
-              <option value="asphalt">Асфальт</option>
-              <option value="rubber">Резина</option>
-              <option value="concrete">Бетон</option>
-            </select>
-            <label className="whitespace-nowrap rounded-full border border-line bg-surface px-3 py-2 text-sm text-ink">
-              <input
-                type="checkbox"
-                checked={filters.hasLighting}
-                onChange={(e) => setFilters({ hasLighting: e.target.checked })}
-              />{" "}
-              Со светом
-            </label>
-          </div>
+          {filtersOpen && (
+            <MapFilterPanel
+              id="desktop-map-filters"
+              className="mb-4 shadow-md"
+              filters={filters}
+              onChange={setFilters}
+              onReset={resetFilters}
+            />
+          )}
           <p className="mb-3 text-xs font-bold uppercase tracking-widest text-muted">
             Найдено: {visible.length}
           </p>
@@ -186,10 +197,33 @@ export default function MapPage() {
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Поиск площадки"
             />
-            <button className="rounded-xl bg-dark px-4 text-white">
+            <button
+              type="button"
+              aria-label="Фильтры"
+              aria-expanded={filtersOpen}
+              aria-controls="mobile-map-filters"
+              onClick={() => setFiltersOpen((open) => !open)}
+              className={`relative rounded-xl px-4 text-white shadow-lg transition ${
+                filtersOpen || activeFilterCount ? "bg-orange" : "bg-dark"
+              }`}
+            >
               <SlidersHorizontal />
+              {activeFilterCount > 0 && (
+                <span className="absolute -right-2 -top-2 grid h-6 min-w-6 place-items-center rounded-full border-2 border-surface bg-dark px-1 text-[11px] font-extrabold text-white">
+                  {activeFilterCount}
+                </span>
+              )}
             </button>
           </div>
+          {filtersOpen && (
+            <MapFilterPanel
+              id="mobile-map-filters"
+              className="absolute left-3 right-3 top-[72px] z-20 md:hidden"
+              filters={filters}
+              onChange={setFilters}
+              onReset={resetFilters}
+            />
+          )}
         </section>
       </main>
       <MobileNav />

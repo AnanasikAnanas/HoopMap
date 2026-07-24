@@ -1,11 +1,15 @@
 import { create } from "zustand";
 
-type Filters = { surface: string; condition: string; hasLighting: boolean };
+export type MapFilters = {
+  surface: string;
+  condition: string;
+  hasLighting: boolean;
+};
 type MapState = {
   selectedCourtId: number | null;
-  filters: Filters;
+  filters: MapFilters;
   selectCourt: (id: number | null) => void;
-  setFilters: (filters: Partial<Filters>) => void;
+  setFilters: (filters: Partial<MapFilters>) => void;
 };
 
 export const useMapStore = create<MapState>((set) => ({

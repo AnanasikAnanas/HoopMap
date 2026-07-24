@@ -25,3 +25,16 @@ test("mobile navigation is available", async ({ page, isMobile }) => {
   await expect(page.getByRole("link", { name: /Карта/ }).last()).toBeVisible();
   await expect(page.getByRole("link", { name: /Игры/ }).last()).toBeVisible();
 });
+
+test("map filters can be opened and changed", async ({ page }) => {
+  await page.goto("/map");
+
+  const trigger = page.locator('button[aria-label="Фильтры"]:visible');
+  await trigger.click();
+
+  const panel = page.locator('[id$="map-filters"]:visible');
+  await expect(panel.getByText("Фильтры площадок")).toBeVisible();
+  await panel.getByLabel("Покрытие").selectOption("rubber");
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await expect(trigger.getByText("1")).toBeVisible();
+});
