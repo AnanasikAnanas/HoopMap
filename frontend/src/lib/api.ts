@@ -1,7 +1,10 @@
 import type { Court, Game, Page, User } from "./types";
 import { createClient } from "@supabase/supabase-js";
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "/api/v1").replace(/\/$/, "");
+const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "/api/v1").replace(
+  /\/$/,
+  "",
+);
 let accessToken: string | null = null;
 let refreshPromise: Promise<string | null> | null = null;
 
@@ -93,7 +96,8 @@ export const courtsApi = {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     if (!supabaseUrl || !anonKey) throw new Error("Supabase is not configured");
-    const bucket = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || "hoopmap-media";
+    const bucket =
+      process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || "hoopmap-media";
     const supabase = createClient(supabaseUrl, anonKey);
     const uploaded = await supabase.storage
       .from(bucket)
@@ -121,7 +125,7 @@ export const gamesApi = {
   one: (id: string) => api<Game>(`/games/${id}/`),
   create: (body: Record<string, unknown>) =>
     api<Game>("/games/", { method: "POST", body: JSON.stringify(body) }),
-  join: (id: number) => api(`/games/${id}/join/`, { method: "POST" }),
+  join: (id: number) => api<Game>(`/games/${id}/join/`, { method: "POST" }),
   leave: (id: number) => api(`/games/${id}/leave/`, { method: "POST" }),
 };
 
@@ -194,7 +198,11 @@ export async function restoreSession(): Promise<boolean> {
 
 export async function logout(): Promise<void> {
   try {
-    await requestApi<void>("/auth/logout/", { method: "POST", body: "{}" }, false);
+    await requestApi<void>(
+      "/auth/logout/",
+      { method: "POST", body: "{}" },
+      false,
+    );
   } finally {
     setAccessToken(null);
   }

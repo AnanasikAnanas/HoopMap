@@ -44,7 +44,11 @@ const court: Court = {
   created_by: creator,
 };
 
-function game(id: number, startsAt: string): Game {
+function game(
+  id: number,
+  startsAt: string,
+  overrides: Partial<Game> = {},
+): Game {
   return {
     id,
     court_details: court,
@@ -58,6 +62,7 @@ function game(id: number, startsAt: string): Game {
     status: "scheduled",
     players_count: 6,
     is_joined: false,
+    ...overrides,
   };
 }
 
@@ -74,15 +79,62 @@ describe("map games", () => {
   });
 
   it("shows time, court and available places in the map card", () => {
-    render(<MapGameCard game={game(1, "2030-08-10T16:00:00.000Z")} />);
+    const onJoin = vi.fn();
+    render(
+      <MapGameCard
+        game={game(1, "2030-08-10T16:00:00.000Z")}
+        onJoin={onJoin}
+      />,
+    );
 
     expect(screen.getByText("Игра 1")).toBeInTheDocument();
     expect(screen.getByText("Парк Победы")).toBeInTheDocument();
     expect(screen.getByText("Свободно 4")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Открыть игру" })).toHaveAttribute(
+    fireEvent.click(screen.getByRole("button", { name: "Присоединиться" }));
+    expect(onJoin).toHaveBeenCalledOnce();
+    expect(screen.getByRole("link", { name: "Подробнее" })).toHaveAttribute(
       "href",
       "/games/1",
     );
+  });
+
+  it("prevents joining twice or when the game is full", () => {
+    const onJoin = vi.fn();
+    const { rerender } = render(
+      <MapGameCard
+        game={game(1, "2030-08-10T16:00:00.000Z", { is_joined: true })}
+        onJoin={onJoin}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Вы участвуете" }),
+    ).toBeDisabled();
+
+    rerender(
+      <MapGameCard
+        game={game(1, "2030-08-10T16:00:00.000Z", {
+          players_count: 10,
+        })}
+        onJoin={onJoin}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Мест нет" })).toBeDisabled();
+    expect(onJoin).not.toHaveBeenCalled();
+  });
+
+  it("shows progress while joining", () => {
+    render(
+      <MapGameCard
+        game={game(1, "2030-08-10T16:00:00.000Z")}
+        onJoin={vi.fn()}
+        joining
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Присоединяем…" }),
+    ).toBeDisabled();
   });
 
   it("toggles the active game layer", () => {

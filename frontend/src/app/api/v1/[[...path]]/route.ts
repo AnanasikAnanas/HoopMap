@@ -968,8 +968,20 @@ async function gameMembership(
       target_game_id: gameId,
     },
   );
-  if (result.error) throw result.error;
-  return action === "join" ? json({ status: "joined" }, 201) : empty();
+  if (result.error) {
+    const message = result.error.message;
+    if (message.includes("Game is full")) {
+      throw new HttpError(409, "В игре больше нет свободных мест");
+    }
+    if (message.includes("Already joined")) {
+      throw new HttpError(409, "Вы уже участвуете в этой игре");
+    }
+    if (message.includes("Game cannot be joined")) {
+      throw new HttpError(409, "К этой игре уже нельзя присоединиться");
+    }
+    throw result.error;
+  }
+  return action === "join" ? oneGame(request, gameId) : empty();
 }
 
 async function authTelegram(request: NextRequest) {

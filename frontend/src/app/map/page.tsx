@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import {
   ArrowDownWideNarrow,
   LocateFixed,
@@ -19,7 +20,7 @@ import { MapFilterPanel } from "@/components/map-filter-panel";
 import { MapGameCard } from "@/components/map-game-card";
 import { MapGamesToggle } from "@/components/map-games-toggle";
 import { Button, Input } from "@/components/ui";
-import { authApi, courtsApi, gamesApi } from "@/lib/api";
+import { ApiError, authApi, courtsApi, gamesApi } from "@/lib/api";
 import {
   hapticImpact,
   hapticNotification,
@@ -28,6 +29,7 @@ import {
 import { useMapStore } from "@/store/map";
 import { useToast } from "@/components/toast";
 import { distanceMeters } from "@/lib/geo";
+import type { Game, Page } from "@/lib/types";
 
 export default function MapPage() {
   const [bbox, setBbox] = useState("48.9,53.2,49.9,53.8");
@@ -46,9 +48,10 @@ export default function MapPage() {
   const [sortByDistance, setSortByDistance] = useState(true);
   const [showGames, setShowGames] = useState(true);
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null);
+  const router = useRouter();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const { data: user } = useQuery({
+  const { data: user, isLoading: userLoading } = useQuery({
     queryKey: ["me"],
     queryFn: authApi.me,
     retry: false,
@@ -130,6 +133,47 @@ export default function MapPage() {
     queryFn: () => gamesApi.list(gameQuery),
     enabled: showGames,
   });
+  const quickJoin = useMutation({
+    mutationFn: (gameId: number) => gamesApi.join(gameId),
+    onSuccess: (updated) => {
+      queryClient.setQueriesData<Page<Game>>(
+        { queryKey: ["map-games"] },
+        (current) =>
+          current
+            ? {
+                ...current,
+                results: current.results.map((game) =>
+                  game.id === updated.id ? updated : game,
+                ),
+              }
+            : current,
+      );
+      queryClient.setQueryData(["game", String(updated.id)], updated);
+      hapticNotification("success");
+      showToast("Вы присоединились к игре", { tone: "success" });
+    },
+    onError: (error) => {
+      hapticNotification("error");
+      if (error instanceof ApiError && error.status === 401) {
+        showToast("Войдите, чтобы присоединиться к игре", {
+          tone: "info",
+        });
+        router.push("/login?next=%2Fmap");
+        return;
+      }
+      const payload =
+        error instanceof ApiError
+          ? (error.payload as { detail?: unknown } | null)
+          : null;
+      showToast(
+        typeof payload?.detail === "string"
+          ? payload.detail
+          : "Не удалось присоединиться к игре",
+        { tone: "error" },
+      );
+      void queryClient.invalidateQueries({ queryKey: ["map-games"] });
+    },
+  });
   const activeGames = showGames ? (gamePage?.results ?? []) : [];
   const courts = courtPage?.results;
   const courtsWithDistance = useMemo(
@@ -161,6 +205,15 @@ export default function MapPage() {
     (court) => court.id === selectedCourtId,
   );
   const selectedGame = activeGames.find((game) => game.id === selectedGameId);
+  const joinSelectedGame = (game: Game) => {
+    if (!user) {
+      hapticNotification("warning");
+      showToast("Сначала войдите в аккаунт", { tone: "info" });
+      router.push("/login?next=%2Fmap");
+      return;
+    }
+    quickJoin.mutate(game.id);
+  };
   const onBounds = useCallback(
     (b: { minLon: number; minLat: number; maxLon: number; maxLat: number }) =>
       setBbox(`${b.minLon},${b.minLat},${b.maxLon},${b.maxLat}`),
@@ -469,7 +522,14 @@ export default function MapPage() {
                   <X size={18} />
                 </button>
               </div>
-              <MapGameCard game={selectedGame} />
+              <MapGameCard
+                game={selectedGame}
+                onJoin={() => joinSelectedGame(selectedGame)}
+                joining={
+                  quickJoin.isPending && quickJoin.variables === selectedGame.id
+                }
+                checkingAuth={userLoading}
+              />
             </div>
           )}
           {!courtsLoading &&

@@ -1,10 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { CalendarDays, MapPin, Users } from "lucide-react";
+import {
+  ArrowRight,
+  CalendarDays,
+  Check,
+  LoaderCircle,
+  MapPin,
+  Users,
+} from "lucide-react";
 import type { Game } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
-import { Badge, Card } from "@/components/ui";
+import { Badge, Button, Card } from "@/components/ui";
 
 const skillLabels: Record<string, string> = {
   any: "Любой уровень",
@@ -13,8 +20,19 @@ const skillLabels: Record<string, string> = {
   advanced: "Продвинутые",
 };
 
-export function MapGameCard({ game }: { game: Game }) {
+export function MapGameCard({
+  game,
+  onJoin,
+  joining = false,
+  checkingAuth = false,
+}: {
+  game: Game;
+  onJoin: () => void;
+  joining?: boolean;
+  checkingAuth?: boolean;
+}) {
   const freeSpots = Math.max(game.max_players - game.players_count, 0);
+  const canJoin = freeSpots > 0 && !game.is_joined;
 
   return (
     <Card className="border-0 p-4 shadow-none">
@@ -47,11 +65,39 @@ export function MapGameCard({ game }: { game: Game }) {
           Участники: {game.players_count}/{game.max_players}
         </p>
       </div>
+      <Button
+        type="button"
+        onClick={onJoin}
+        disabled={!canJoin || joining || checkingAuth}
+        className={`mt-4 w-full gap-2 disabled:opacity-100 ${
+          game.is_joined
+            ? "bg-success"
+            : freeSpots === 0
+              ? "bg-canvas text-muted ring-1 ring-line"
+              : ""
+        }`}
+      >
+        {joining || checkingAuth ? (
+          <LoaderCircle size={17} className="animate-spin" />
+        ) : game.is_joined ? (
+          <Check size={17} />
+        ) : null}
+        {checkingAuth
+          ? "Проверяем вход…"
+          : joining
+            ? "Присоединяем…"
+            : game.is_joined
+              ? "Вы участвуете"
+              : freeSpots === 0
+                ? "Мест нет"
+                : "Присоединиться"}
+      </Button>
       <Link
         href={`/games/${game.id}`}
-        className="mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-full bg-orange px-5 text-sm font-bold text-white transition hover:bg-[#d95822] active:scale-[0.98]"
+        className="mt-3 inline-flex min-h-9 w-full items-center justify-center gap-1 text-sm font-bold text-muted transition hover:text-orange"
       >
-        Открыть игру
+        Подробнее
+        <ArrowRight size={15} />
       </Link>
     </Card>
   );
