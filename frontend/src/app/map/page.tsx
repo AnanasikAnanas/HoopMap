@@ -16,8 +16,10 @@ import { CourtsMap } from "@/components/courts-map";
 import { CourtCard } from "@/components/court-card";
 import { Header, MobileNav } from "@/components/header";
 import { MapFilterPanel } from "@/components/map-filter-panel";
+import { MapGameCard } from "@/components/map-game-card";
+import { MapGamesToggle } from "@/components/map-games-toggle";
 import { Button, Input } from "@/components/ui";
-import { authApi, courtsApi } from "@/lib/api";
+import { authApi, courtsApi, gamesApi } from "@/lib/api";
 import {
   hapticImpact,
   hapticNotification,
@@ -42,6 +44,8 @@ export default function MapPage() {
   >("idle");
   const [focusLocationRequest, setFocusLocationRequest] = useState(0);
   const [sortByDistance, setSortByDistance] = useState(true);
+  const [showGames, setShowGames] = useState(true);
+  const [selectedGameId, setSelectedGameId] = useState<number | null>(null);
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const { data: user } = useQuery({
@@ -86,7 +90,19 @@ export default function MapPage() {
   const handleCourtSelect = (id: number | null) => {
     if (id == null) hapticImpact("light");
     else hapticSelection();
+    setSelectedGameId(null);
     selectCourt(id);
+  };
+  const handleGameSelect = (id: number | null) => {
+    if (id == null) hapticImpact("light");
+    else hapticSelection();
+    selectCourt(null);
+    setSelectedGameId(id);
+  };
+  const toggleGames = () => {
+    hapticImpact("light");
+    if (showGames) setSelectedGameId(null);
+    setShowGames((active) => !active);
   };
   const query = useMemo(() => {
     const p = new URLSearchParams({ bbox, page_size: "100" });
@@ -99,6 +115,22 @@ export default function MapPage() {
     queryKey: ["courts", query],
     queryFn: () => courtsApi.list(query),
   });
+  const gameQuery = useMemo(
+    () =>
+      new URLSearchParams({
+        bbox,
+        status: "scheduled",
+        upcoming: "true",
+        page_size: "100",
+      }).toString(),
+    [bbox],
+  );
+  const { data: gamePage, isFetching: gamesLoading } = useQuery({
+    queryKey: ["map-games", gameQuery],
+    queryFn: () => gamesApi.list(gameQuery),
+    enabled: showGames,
+  });
+  const activeGames = showGames ? (gamePage?.results ?? []) : [];
   const courts = courtPage?.results;
   const courtsWithDistance = useMemo(
     () =>
@@ -128,6 +160,7 @@ export default function MapPage() {
   const selected = courtsWithDistance.find(
     (court) => court.id === selectedCourtId,
   );
+  const selectedGame = activeGames.find((game) => game.id === selectedGameId);
   const onBounds = useCallback(
     (b: { minLon: number; minLat: number; maxLon: number; maxLat: number }) =>
       setBbox(`${b.minLon},${b.minLat},${b.maxLon},${b.maxLat}`),
@@ -251,6 +284,13 @@ export default function MapPage() {
               />
             </div>
           </div>
+          <MapGamesToggle
+            active={showGames}
+            count={activeGames.length}
+            loading={gamesLoading}
+            onToggle={toggleGames}
+            className="mb-3 w-full shadow-none"
+          />
           <div className="mb-3 flex items-center justify-between gap-3">
             <p className="text-xs font-bold uppercase tracking-widest text-muted">
               Найдено: {visible.length}
@@ -313,11 +353,14 @@ export default function MapPage() {
         <section className="relative">
           <CourtsMap
             courts={visible}
+            games={activeGames}
             onBounds={onBounds}
             onSelect={handleCourtSelect}
+            onGameSelect={handleGameSelect}
             initialCenter={userLocation ?? user?.map_home ?? undefined}
             userLocation={userLocation}
             selectedCourtId={selectedCourtId}
+            selectedGameId={selectedGameId}
             focusLocationRequest={focusLocationRequest}
           />
           {courtsLoading && !courtPage && (
@@ -410,12 +453,44 @@ export default function MapPage() {
               />
             </div>
           )}
-          {!courtsLoading && visible.length === 0 && !filtersOpen && (
-            <div className="absolute left-3 top-[72px] z-10 inline-flex max-w-[calc(100%-76px)] items-center gap-2 rounded-full border border-line bg-surface px-3 py-2 text-xs font-bold text-ink shadow-lg md:hidden">
-              <SearchX size={15} className="shrink-0 text-orange" />
-              Ничего не найдено
+          {selectedGame && (
+            <div
+              key={selectedGame.id}
+              className="court-sheet-enter absolute inset-x-3 bottom-20 z-20 rounded-3xl border border-line bg-surface p-2 shadow-2xl md:bottom-4 md:left-auto md:w-96"
+            >
+              <div className="relative flex min-h-8 items-center justify-center md:justify-end">
+                <span className="h-1 w-12 rounded-full bg-line md:hidden" />
+                <button
+                  type="button"
+                  aria-label="Закрыть карточку игры"
+                  onClick={() => handleGameSelect(null)}
+                  className="absolute right-0 top-0 grid h-8 w-8 place-items-center rounded-full text-muted transition hover:bg-canvas hover:text-ink active:scale-90"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <MapGameCard game={selectedGame} />
             </div>
           )}
+          {!courtsLoading &&
+            visible.length === 0 &&
+            activeGames.length === 0 &&
+            !filtersOpen && (
+              <div className="absolute left-3 top-[120px] z-10 inline-flex max-w-[calc(100%-24px)] items-center gap-2 rounded-full border border-line bg-surface px-3 py-2 text-xs font-bold text-ink shadow-lg md:hidden">
+                <SearchX size={15} className="shrink-0 text-orange" />
+                Ничего не найдено
+              </div>
+            )}
+          <MapGamesToggle
+            active={showGames}
+            count={activeGames.length}
+            loading={gamesLoading}
+            onToggle={toggleGames}
+            compact
+            className={`absolute left-3 top-[72px] z-10 md:hidden ${
+              filtersOpen ? "pointer-events-none scale-90 opacity-0" : ""
+            }`}
+          />
           <div className="absolute left-3 top-3 z-10 flex w-[calc(100%-24px)] gap-2 md:hidden">
             <div className="relative flex-1">
               <Input

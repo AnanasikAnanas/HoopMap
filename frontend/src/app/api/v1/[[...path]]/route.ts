@@ -56,17 +56,24 @@ class HttpError extends Error {
 function json(data: unknown, status = 200): NextResponse {
   return NextResponse.json(data, {
     status,
-    headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
+    headers: {
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
   });
 }
 
 function empty(status = 204): NextResponse {
-  return new NextResponse(null, { status, headers: { "Cache-Control": "no-store" } });
+  return new NextResponse(null, {
+    status,
+    headers: { "Cache-Control": "no-store" },
+  });
 }
 
 async function body(request: NextRequest): Promise<unknown> {
   const contentType = request.headers.get("content-type") ?? "";
-  if (!contentType.includes("application/json")) throw new HttpError(415, "Ожидается JSON");
+  if (!contentType.includes("application/json"))
+    throw new HttpError(415, "Ожидается JSON");
   try {
     return await request.json();
   } catch {
@@ -74,9 +81,13 @@ async function body(request: NextRequest): Promise<unknown> {
   }
 }
 
-async function identity(request: NextRequest, required = false): Promise<RequestIdentity | null> {
+async function identity(
+  request: NextRequest,
+  required = false,
+): Promise<RequestIdentity | null> {
   const result = await getIdentity(request);
-  if (!result && (required || bearerToken(request))) throw new HttpError(401, "Требуется авторизация");
+  if (!result && (required || bearerToken(request)))
+    throw new HttpError(401, "Требуется авторизация");
   return result;
 }
 
@@ -92,32 +103,46 @@ async function rateLimit(
   windowSeconds: number,
   profileId?: number,
 ) {
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const forwarded =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
   const secret =
     process.env.RATE_LIMIT_SECRET?.trim() ||
     process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ||
     "development-only";
   const subject = profileId ? `user:${profileId}` : `ip:${forwarded}`;
-  const digest = createHmac("sha256", secret).update(subject).digest("hex").slice(0, 32);
+  const digest = createHmac("sha256", secret)
+    .update(subject)
+    .digest("hex")
+    .slice(0, 32);
   const result = await createServiceClient().rpc("consume_rate_limit", {
     target_key: `${scope}:${digest}`,
     maximum_requests: maximumRequests,
     window_seconds: windowSeconds,
   });
   if (result.error) throw result.error;
-  if (!result.data) throw new HttpError(429, "Слишком много запросов. Попробуйте позже.");
+  if (!result.data)
+    throw new HttpError(429, "Слишком много запросов. Попробуйте позже.");
 }
 
 function positiveInt(value: string | undefined, field = "id"): number {
   const result = Number(value);
-  if (!Number.isSafeInteger(result) || result <= 0) throw new HttpError(400, `Некорректный ${field}`);
+  if (!Number.isSafeInteger(result) || result <= 0)
+    throw new HttpError(400, `Некорректный ${field}`);
   return result;
 }
 
 function pageParams(url: URL) {
   const page = Math.max(1, Number(url.searchParams.get("page") || 1) || 1);
-  const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get("page_size") || 20) || 20));
-  return { page, pageSize, from: (page - 1) * pageSize, to: page * pageSize - 1 };
+  const pageSize = Math.min(
+    100,
+    Math.max(1, Number(url.searchParams.get("page_size") || 20) || 20),
+  );
+  return {
+    page,
+    pageSize,
+    from: (page - 1) * pageSize,
+    to: page * pageSize - 1,
+  };
 }
 
 function pageResponse<T>(url: URL, results: T[], count: number) {
@@ -162,7 +187,8 @@ async function listCourts(request: NextRequest) {
   const { from, to } = pageParams(url);
   const favoriteOnly = url.searchParams.get("favorite") === "true";
   const mineOnly = url.searchParams.get("mine") === "true";
-  if ((favoriteOnly || mineOnly) && !current) throw new HttpError(401, "Требуется авторизация");
+  if ((favoriteOnly || mineOnly) && !current)
+    throw new HttpError(401, "Требуется авторизация");
 
   let favoriteIds: number[] | null = null;
   if (favoriteOnly) {
@@ -191,12 +217,14 @@ async function listCourts(request: NextRequest) {
   }
   for (const field of ["has_lighting", "has_nets"] as const) {
     const value = url.searchParams.get(field);
-    if (value === "true" || value === "false") query = query.eq(field, value === "true");
+    if (value === "true" || value === "false")
+      query = query.eq(field, value === "true");
   }
   const hoops = url.searchParams.get("hoops_count");
   const minHoops = url.searchParams.get("hoops_count_min");
   if (hoops) query = query.eq("hoops_count", positiveInt(hoops, "hoops_count"));
-  if (minHoops) query = query.gte("hoops_count", positiveInt(minHoops, "hoops_count_min"));
+  if (minHoops)
+    query = query.gte("hoops_count", positiveInt(minHoops, "hoops_count_min"));
   if (mineOnly) query = query.eq("created_by", current!.profile.id);
   if (favoriteIds) query = query.in("id", favoriteIds);
 
@@ -209,7 +237,10 @@ async function listCourts(request: NextRequest) {
       values[0] >= values[2] ||
       values[1] >= values[3]
     ) {
-      throw new HttpError(400, "bbox должен быть min_lon,min_lat,max_lon,max_lat");
+      throw new HttpError(
+        400,
+        "bbox должен быть min_lon,min_lat,max_lon,max_lat",
+      );
     }
     query = query
       .gte("longitude", values[0])
@@ -218,7 +249,9 @@ async function listCourts(request: NextRequest) {
       .lte("latitude", values[3]);
   }
 
-  const result = await query.order("created_at", { ascending: false }).range(from, to);
+  const result = await query
+    .order("created_at", { ascending: false })
+    .range(from, to);
   if (result.error) throw result.error;
   const courts = (result.data ?? []).map((record) => serializeCourt(record));
   return json(pageResponse(url, courts, result.count ?? courts.length));
@@ -229,19 +262,39 @@ async function nearbyCourts(request: NextRequest) {
   const lat = Number(request.nextUrl.searchParams.get("lat"));
   const lon = Number(request.nextUrl.searchParams.get("lon"));
   const radius = Number(request.nextUrl.searchParams.get("radius") || 5000);
-  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isInteger(radius)) {
+  if (
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lon) ||
+    !Number.isInteger(radius)
+  ) {
     throw new HttpError(400, "Передайте корректные lat, lon и radius");
   }
-  const nearby = await client.rpc("nearby_courts", { lat, lon, radius_m: radius });
+  const nearby = await client.rpc("nearby_courts", {
+    lat,
+    lon,
+    radius_m: radius,
+  });
   if (nearby.error) throw nearby.error;
-  const rows = (nearby.data ?? []) as Array<{ court_id: number; distance_m: number }>;
-  const records = await courtRecords(client, rows.map((item) => Number(item.court_id)));
-  const byId = new Map(records.map((record: any) => [Number(record.id), record]));
+  const rows = (nearby.data ?? []) as Array<{
+    court_id: number;
+    distance_m: number;
+  }>;
+  const records = await courtRecords(
+    client,
+    rows.map((item) => Number(item.court_id)),
+  );
+  const byId = new Map(
+    records.map((record: any) => [Number(record.id), record]),
+  );
   const all = rows
     .filter((item) => byId.has(Number(item.court_id)))
-    .map((item) => serializeCourt(byId.get(Number(item.court_id)), Number(item.distance_m)));
+    .map((item) =>
+      serializeCourt(byId.get(Number(item.court_id)), Number(item.distance_m)),
+    );
   const { from, to } = pageParams(request.nextUrl);
-  return json(pageResponse(request.nextUrl, all.slice(from, to + 1), all.length));
+  return json(
+    pageResponse(request.nextUrl, all.slice(from, to + 1), all.length),
+  );
 }
 
 const courtInput = z.object({
@@ -255,13 +308,19 @@ const courtInput = z.object({
     lon: z.number().min(-180).max(180),
   }),
   court_type: z.enum(["full", "half", "single_hoop", "indoor", "outdoor"]),
-  access_type: z.enum(["free", "restricted", "paid", "private"]).default("free"),
-  surface: z.enum(["asphalt", "rubber", "concrete", "parquet", "other"]).default("other"),
+  access_type: z
+    .enum(["free", "restricted", "paid", "private"])
+    .default("free"),
+  surface: z
+    .enum(["asphalt", "rubber", "concrete", "parquet", "other"])
+    .default("other"),
   hoops_count: z.number().int().min(1).max(20),
   has_lighting: z.boolean().default(false),
   has_marking: z.boolean().default(true),
   has_nets: z.boolean().default(false),
-  condition: z.enum(["excellent", "good", "fair", "poor", "unknown"]).default("unknown"),
+  condition: z
+    .enum(["excellent", "good", "fair", "poor", "unknown"])
+    .default("unknown"),
 });
 
 function slugify(value: string): string {
@@ -278,7 +337,8 @@ async function createCourt(request: NextRequest) {
   const current = await identity(request, true);
   await rateLimit(request, "court-create", 10, 3600, current!.profile.id);
   const parsed = courtInput.safeParse(await body(request));
-  if (!parsed.success) throw new HttpError(400, "Проверьте поля площадки", parsed.error.flatten());
+  if (!parsed.success)
+    throw new HttpError(400, "Проверьте поля площадки", parsed.error.flatten());
   const value = parsed.data;
   const inserted = await current!.client
     .from("courts")
@@ -307,7 +367,10 @@ async function createCourt(request: NextRequest) {
     .select("id,slug")
     .single();
   if (inserted.error) throw inserted.error;
-  return json(serializeCourt(await oneCourt(current!.client, String(inserted.data.id))), 201);
+  return json(
+    serializeCourt(await oneCourt(current!.client, String(inserted.data.id))),
+    201,
+  );
 }
 
 const importCourtInput = z.object({
@@ -368,7 +431,8 @@ function importSourceId(
 
 async function importCourts(request: NextRequest) {
   const current = await identity(request, true);
-  if (!isModerator(current!.profile)) throw new HttpError(403, "Недостаточно прав");
+  if (!isModerator(current!.profile))
+    throw new HttpError(403, "Недостаточно прав");
   await rateLimit(request, "court-import", 5, 3600, current!.profile.id);
   const parsed = importCourtsInput.safeParse(await body(request));
   if (!parsed.success) {
@@ -383,7 +447,9 @@ async function importCourts(request: NextRequest) {
     ...court,
     sourceId: importSourceId(court, value.city),
   }));
-  const sourceIds = Array.from(new Set(prepared.map((court) => court.sourceId)));
+  const sourceIds = Array.from(
+    new Set(prepared.map((court) => court.sourceId)),
+  );
   const existingBySource = await current!.client
     .from("courts")
     .select("source_id")
@@ -477,7 +543,11 @@ const photoPrepare = z.object({
   action: z.literal("prepare"),
   filename: z.string().min(1).max(255),
   content_type: z.enum(["image/jpeg", "image/png", "image/webp"]),
-  size: z.number().int().positive().max(10 * 1024 * 1024),
+  size: z
+    .number()
+    .int()
+    .positive()
+    .max(10 * 1024 * 1024),
 });
 const photoComplete = z.object({
   action: z.literal("complete"),
@@ -500,17 +570,25 @@ async function courtPhoto(request: NextRequest, courtId: number) {
       "image/webp": "webp",
     }[prepare.data.content_type];
     const path = `courts/${courtId}/${current!.profile.id}/${crypto.randomUUID()}.${extension}`;
-    const signed = await createServiceClient().storage.from(bucket).createSignedUploadUrl(path);
+    const signed = await createServiceClient()
+      .storage.from(bucket)
+      .createSignedUploadUrl(path);
     if (signed.error) throw signed.error;
     return json({ path, token: signed.data.token });
   }
   if (complete.success) {
     const expectedPrefix = `courts/${courtId}/${current!.profile.id}/`;
-    if (!complete.data.path.startsWith(expectedPrefix)) throw new HttpError(403, "Недопустимый путь");
-    const folder = complete.data.path.slice(0, complete.data.path.lastIndexOf("/"));
-    const filename = complete.data.path.slice(complete.data.path.lastIndexOf("/") + 1);
-    const stored = await createServiceClient().storage
-      .from(bucket)
+    if (!complete.data.path.startsWith(expectedPrefix))
+      throw new HttpError(403, "Недопустимый путь");
+    const folder = complete.data.path.slice(
+      0,
+      complete.data.path.lastIndexOf("/"),
+    );
+    const filename = complete.data.path.slice(
+      complete.data.path.lastIndexOf("/") + 1,
+    );
+    const stored = await createServiceClient()
+      .storage.from(bucket)
       .list(folder, { search: filename, limit: 1 });
     if (stored.error || !stored.data?.some((item) => item.name === filename)) {
       throw new HttpError(400, "Фотография не загружена");
@@ -562,7 +640,10 @@ async function verifyCourt(request: NextRequest, courtId: number) {
   const current = await identity(request, true);
   await rateLimit(request, "court-verify", 30, 3600, current!.profile.id);
   const input = z
-    .object({ is_confirmed: z.boolean().default(true), comment: z.string().max(1000).default("") })
+    .object({
+      is_confirmed: z.boolean().default(true),
+      comment: z.string().max(1000).default(""),
+    })
     .safeParse(await body(request));
   if (!input.success) throw new HttpError(400, "Некорректное подтверждение");
   const result = await current!.client.rpc("verify_court", {
@@ -578,9 +659,13 @@ async function reviewCourt(request: NextRequest, courtId: number) {
   const current = await identity(request, true);
   await rateLimit(request, "court-review", 20, 3600, current!.profile.id);
   const input = z
-    .object({ rating: z.number().int().min(1).max(5), text: z.string().max(3000).default("") })
+    .object({
+      rating: z.number().int().min(1).max(5),
+      text: z.string().max(3000).default(""),
+    })
     .safeParse(await body(request));
-  if (!input.success) throw new HttpError(400, "Проверьте отзыв", input.error.flatten());
+  if (!input.success)
+    throw new HttpError(400, "Проверьте отзыв", input.error.flatten());
   const result = await current!.client
     .from("court_reviews")
     .upsert(
@@ -616,7 +701,8 @@ async function reportCourt(request: NextRequest, courtId: number) {
       description: z.string().max(3000).default(""),
     })
     .safeParse(await body(request));
-  if (!input.success) throw new HttpError(400, "Проверьте жалобу", input.error.flatten());
+  if (!input.success)
+    throw new HttpError(400, "Проверьте жалобу", input.error.flatten());
   const result = await current!.client
     .from("court_reports")
     .insert({
@@ -663,9 +749,12 @@ async function duplicateCourts(request: NextRequest, courtId: number) {
 
 async function moderateCourt(request: NextRequest, courtId: number) {
   const current = await identity(request, true);
-  if (!isModerator(current!.profile)) throw new HttpError(403, "Недостаточно прав");
+  if (!isModerator(current!.profile))
+    throw new HttpError(403, "Недостаточно прав");
   const input = z
-    .object({ status: z.enum(["published", "rejected", "closed", "temporarily_closed"]) })
+    .object({
+      status: z.enum(["published", "rejected", "closed", "temporarily_closed"]),
+    })
     .safeParse(await body(request));
   if (!input.success) throw new HttpError(400, "Недопустимый статус");
   const updated = await current!.client
@@ -684,7 +773,8 @@ async function moderateCourt(request: NextRequest, courtId: number) {
       .eq("id", updated.data.created_by)
       .maybeSingle();
     if (owner.data?.telegram_id) {
-      const label = input.data.status === "published" ? "опубликована" : "отклонена";
+      const label =
+        input.data.status === "published" ? "опубликована" : "отклонена";
       await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -710,12 +800,18 @@ async function gameRecords(client: DatabaseClient) {
   return result.data ?? [];
 }
 
-async function serializeGames(client: DatabaseClient, records: any[], current?: RequestIdentity | null) {
+async function serializeGames(
+  client: DatabaseClient,
+  records: any[],
+  current?: RequestIdentity | null,
+) {
   const courts = await courtRecords(
     client,
     Array.from(new Set(records.map((record) => Number(record.court_id)))),
   );
-  const byId = new Map(courts.map((record: any) => [Number(record.id), serializeCourt(record)]));
+  const byId = new Map(
+    courts.map((record: any) => [Number(record.id), serializeCourt(record)]),
+  );
   return records
     .filter((record) => byId.has(Number(record.court_id)))
     .map((record) => ({
@@ -724,7 +820,9 @@ async function serializeGames(client: DatabaseClient, records: any[], current?: 
           ...record,
           participants: (record.participants ?? []).map((participant: any) => ({
             ...participant,
-            mine: current ? Number(participant.user_id) === current.profile.id : false,
+            mine: current
+              ? Number(participant.user_id) === current.profile.id
+              : false,
           })),
         },
         byId.get(Number(record.court_id))!,
@@ -742,7 +840,9 @@ async function listGames(request: NextRequest) {
       (game: any) =>
         Number(game.creator_id) === current.profile.id ||
         (game.participants ?? []).some(
-          (item: any) => Number(item.user_id) === current.profile.id && item.status === "joined",
+          (item: any) =>
+            Number(item.user_id) === current.profile.id &&
+            item.status === "joined",
         ),
     );
   }
@@ -754,19 +854,65 @@ async function listGames(request: NextRequest) {
   ];
   for (const [param, field] of filters) {
     const value = params.get(param);
-    if (value) records = records.filter((record: any) => String(record[field]) === value);
+    if (value)
+      records = records.filter(
+        (record: any) => String(record[field]) === value,
+      );
   }
   const date = params.get("date");
-  if (date) records = records.filter((record: any) => record.starts_at.slice(0, 10) === date);
-  records.sort((a: any, b: any) => Date.parse(a.starts_at) - Date.parse(b.starts_at));
+  if (date)
+    records = records.filter(
+      (record: any) => record.starts_at.slice(0, 10) === date,
+    );
+  if (params.get("upcoming") === "true") {
+    records = records.filter(
+      (record: any) => Date.parse(record.ends_at) > Date.now(),
+    );
+  }
+  const bbox = params.get("bbox");
+  if (bbox) {
+    const values = bbox.split(",").map(Number);
+    if (
+      values.length !== 4 ||
+      values.some((value) => !Number.isFinite(value)) ||
+      values[0] >= values[2] ||
+      values[1] >= values[3]
+    ) {
+      throw new HttpError(
+        400,
+        "bbox должен быть min_lon,min_lat,max_lon,max_lat",
+      );
+    }
+    const courtsInBounds = await client
+      .from("courts")
+      .select("id")
+      .gte("longitude", values[0])
+      .gte("latitude", values[1])
+      .lte("longitude", values[2])
+      .lte("latitude", values[3]);
+    if (courtsInBounds.error) throw courtsInBounds.error;
+    const courtIds = new Set(
+      (courtsInBounds.data ?? []).map((court) => Number(court.id)),
+    );
+    records = records.filter((record: any) =>
+      courtIds.has(Number(record.court_id)),
+    );
+  }
+  records.sort(
+    (a: any, b: any) => Date.parse(a.starts_at) - Date.parse(b.starts_at),
+  );
   const all = await serializeGames(client, records, current);
   const { from, to } = pageParams(request.nextUrl);
-  return json(pageResponse(request.nextUrl, all.slice(from, to + 1), all.length));
+  return json(
+    pageResponse(request.nextUrl, all.slice(from, to + 1), all.length),
+  );
 }
 
 async function oneGame(request: NextRequest, gameId: number) {
   const { current, client } = await clientFor(request);
-  const records = (await gameRecords(client)).filter((record: any) => Number(record.id) === gameId);
+  const records = (await gameRecords(client)).filter(
+    (record: any) => Number(record.id) === gameId,
+  );
   if (!records.length) throw new HttpError(404, "Игра не найдена");
   return json((await serializeGames(client, records, current))[0]);
 }
@@ -785,8 +931,15 @@ async function createGame(request: NextRequest) {
   const current = await identity(request, true);
   await rateLimit(request, "game-create", 10, 3600, current!.profile.id);
   const parsed = gameInput.safeParse(await body(request));
-  if (!parsed.success || Date.parse(parsed.data.ends_at) <= Date.parse(parsed.data.starts_at)) {
-    throw new HttpError(400, "Проверьте параметры игры", parsed.success ? undefined : parsed.error.flatten());
+  if (
+    !parsed.success ||
+    Date.parse(parsed.data.ends_at) <= Date.parse(parsed.data.starts_at)
+  ) {
+    throw new HttpError(
+      400,
+      "Проверьте параметры игры",
+      parsed.success ? undefined : parsed.error.flatten(),
+    );
   }
   const value = parsed.data;
   const created = await current!.client.rpc("create_game", {
@@ -802,24 +955,42 @@ async function createGame(request: NextRequest) {
   return await oneGame(request, Number(created.data));
 }
 
-async function gameMembership(request: NextRequest, gameId: number, action: "join" | "leave") {
+async function gameMembership(
+  request: NextRequest,
+  gameId: number,
+  action: "join" | "leave",
+) {
   const current = await identity(request, true);
   await rateLimit(request, "game-membership", 60, 3600, current!.profile.id);
-  const result = await current!.client.rpc(action === "join" ? "join_game" : "leave_game", {
-    target_game_id: gameId,
-  });
+  const result = await current!.client.rpc(
+    action === "join" ? "join_game" : "leave_game",
+    {
+      target_game_id: gameId,
+    },
+  );
   if (result.error) throw result.error;
   return action === "join" ? json({ status: "joined" }, 201) : empty();
 }
 
 async function authTelegram(request: NextRequest) {
   await rateLimit(request, "telegram-auth", 20, 900);
-  const parsed = z.object({ init_data: z.string().min(1).max(8192) }).safeParse(await body(request));
+  const parsed = z
+    .object({ init_data: z.string().min(1).max(8192) })
+    .safeParse(await body(request));
   if (!parsed.success) throw new HttpError(400, "Некорректные данные Telegram");
-  const profile = await ensureTelegramUser(validateTelegramInitData(parsed.data.init_data));
+  const profile = await ensureTelegramUser(
+    validateTelegramInitData(parsed.data.init_data),
+  );
   const session = await createTelegramSession(profile);
-  const response = json({ access: session.access_token, user: privateUser(profile) });
-  response.cookies.set(refreshCookieName(), session.refresh_token, refreshCookieOptions());
+  const response = json({
+    access: session.access_token,
+    user: privateUser(profile),
+  });
+  response.cookies.set(
+    refreshCookieName(),
+    session.refresh_token,
+    refreshCookieOptions(),
+  );
   return response;
 }
 
@@ -901,11 +1072,7 @@ async function authEmailRegister(request: NextRequest) {
   const profile = await ensureEmailProfile(authUser, parsed.data.name);
   const session = registered.data.session;
   if (!session) return confirmationResponse();
-  return sessionResponse(
-    session.access_token,
-    session.refresh_token,
-    profile,
-  );
+  return sessionResponse(session.access_token, session.refresh_token, profile);
 }
 
 async function authEmailLogin(request: NextRequest) {
@@ -931,16 +1098,26 @@ async function authEmailLogin(request: NextRequest) {
 async function authRefresh(request: NextRequest) {
   const refreshToken = request.cookies.get(refreshCookieName())?.value;
   if (!refreshToken) throw new HttpError(401, "Сессия не найдена");
-  const refreshed = await createRequestClient().auth.refreshSession({ refresh_token: refreshToken });
-  if (refreshed.error || !refreshed.data.session) throw new HttpError(401, "Сессия истекла");
+  const refreshed = await createRequestClient().auth.refreshSession({
+    refresh_token: refreshToken,
+  });
+  if (refreshed.error || !refreshed.data.session)
+    throw new HttpError(401, "Сессия истекла");
   const response = json({ access: refreshed.data.session.access_token });
-  response.cookies.set(refreshCookieName(), refreshed.data.session.refresh_token, refreshCookieOptions());
+  response.cookies.set(
+    refreshCookieName(),
+    refreshed.data.session.refresh_token,
+    refreshCookieOptions(),
+  );
   return response;
 }
 
 function authLogout() {
   const response = empty();
-  response.cookies.set(refreshCookieName(), "", { ...refreshCookieOptions(), maxAge: 0 });
+  response.cookies.set(refreshCookieName(), "", {
+    ...refreshCookieOptions(),
+    maxAge: 0,
+  });
   return response;
 }
 
@@ -1099,11 +1276,19 @@ async function finishTelegramWebLogin(request: NextRequest) {
   }
 }
 
-async function dispatch(request: NextRequest, segments: string[]): Promise<NextResponse> {
+async function dispatch(
+  request: NextRequest,
+  segments: string[],
+): Promise<NextResponse> {
   const [resource, lookup, action] = segments;
   if (resource === "auth") {
-    if (lookup === "telegram" && request.method === "POST") return authTelegram(request);
-    if (lookup === "telegram" && action === "start" && request.method === "GET") {
+    if (lookup === "telegram" && request.method === "POST")
+      return authTelegram(request);
+    if (
+      lookup === "telegram" &&
+      action === "start" &&
+      request.method === "GET"
+    ) {
       return startTelegramWebLogin(request);
     }
     if (
@@ -1113,13 +1298,18 @@ async function dispatch(request: NextRequest, segments: string[]): Promise<NextR
     ) {
       return finishTelegramWebLogin(request);
     }
-    if (lookup === "email" && action === "register" && request.method === "POST") {
+    if (
+      lookup === "email" &&
+      action === "register" &&
+      request.method === "POST"
+    ) {
       return authEmailRegister(request);
     }
     if (lookup === "email" && action === "login" && request.method === "POST") {
       return authEmailLogin(request);
     }
-    if (lookup === "refresh" && request.method === "POST") return authRefresh(request);
+    if (lookup === "refresh" && request.method === "POST")
+      return authRefresh(request);
     if (lookup === "logout" && request.method === "POST") return authLogout();
     if (lookup === "map-home" && request.method === "PATCH") {
       return updateMapHome(request);
@@ -1132,30 +1322,40 @@ async function dispatch(request: NextRequest, segments: string[]): Promise<NextR
   if (resource === "courts") {
     if (!lookup && request.method === "GET") return listCourts(request);
     if (!lookup && request.method === "POST") return createCourt(request);
-    if (lookup === "nearby" && request.method === "GET") return nearbyCourts(request);
-    if (lookup === "import" && request.method === "POST") return importCourts(request);
+    if (lookup === "nearby" && request.method === "GET")
+      return nearbyCourts(request);
+    if (lookup === "import" && request.method === "POST")
+      return importCourts(request);
     if (lookup && !action && request.method === "GET") {
       const { client } = await clientFor(request);
       return json(serializeCourt(await oneCourt(client, lookup)));
     }
     const courtId = positiveInt(lookup);
-    if (action === "photos" && request.method === "POST") return courtPhoto(request, courtId);
+    if (action === "photos" && request.method === "POST")
+      return courtPhoto(request, courtId);
     if (action === "favorite" && ["POST", "DELETE"].includes(request.method)) {
       return favoriteCourt(request, courtId);
     }
-    if (action === "verify" && request.method === "POST") return verifyCourt(request, courtId);
-    if (action === "reviews" && request.method === "POST") return reviewCourt(request, courtId);
-    if (action === "reports" && request.method === "POST") return reportCourt(request, courtId);
-    if (action === "duplicates" && request.method === "GET") return duplicateCourts(request, courtId);
-    if (action === "moderate" && request.method === "POST") return moderateCourt(request, courtId);
+    if (action === "verify" && request.method === "POST")
+      return verifyCourt(request, courtId);
+    if (action === "reviews" && request.method === "POST")
+      return reviewCourt(request, courtId);
+    if (action === "reports" && request.method === "POST")
+      return reportCourt(request, courtId);
+    if (action === "duplicates" && request.method === "GET")
+      return duplicateCourts(request, courtId);
+    if (action === "moderate" && request.method === "POST")
+      return moderateCourt(request, courtId);
   }
   if (resource === "games") {
     if (!lookup && request.method === "GET") return listGames(request);
     if (!lookup && request.method === "POST") return createGame(request);
     const gameId = positiveInt(lookup);
     if (!action && request.method === "GET") return oneGame(request, gameId);
-    if (action === "join" && request.method === "POST") return gameMembership(request, gameId, "join");
-    if (action === "leave" && request.method === "POST") return gameMembership(request, gameId, "leave");
+    if (action === "join" && request.method === "POST")
+      return gameMembership(request, gameId, "join");
+    if (action === "leave" && request.method === "POST")
+      return gameMembership(request, gameId, "leave");
   }
   throw new HttpError(404, "Маршрут не найден");
 }
@@ -1166,14 +1366,26 @@ async function handler(request: NextRequest, context: RouteContext) {
     return await dispatch(request, path.filter(Boolean));
   } catch (error) {
     if (error instanceof HttpError) {
-      return json({ detail: error.message, errors: error.details }, error.status);
+      return json(
+        { detail: error.message, errors: error.details },
+        error.status,
+      );
     }
     const message = error instanceof Error ? error.message : "Unknown error";
-    const duplicate = message.includes("duplicate key") || message.includes("unique constraint");
-    const auth = message.includes("JWT") || message.includes("Authentication required");
+    const duplicate =
+      message.includes("duplicate key") ||
+      message.includes("unique constraint");
+    const auth =
+      message.includes("JWT") || message.includes("Authentication required");
     console.error("API error", error);
     return json(
-      { detail: auth ? "Требуется авторизация" : duplicate ? "Такая запись уже существует" : "Ошибка сервера" },
+      {
+        detail: auth
+          ? "Требуется авторизация"
+          : duplicate
+            ? "Такая запись уже существует"
+            : "Ошибка сервера",
+      },
       auth ? 401 : duplicate ? 409 : 500,
     );
   }

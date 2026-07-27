@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Map as MapLibreMap, GeoJSONSource, Marker } from "maplibre-gl";
-import type { Court } from "@/lib/types";
+import { groupGamesByCourt } from "@/lib/game-map";
+import type { Court, Game } from "@/lib/types";
 
 type Bounds = {
   minLon: number;
@@ -10,6 +11,8 @@ type Bounds = {
   maxLon: number;
   maxLat: number;
 };
+
+const EMPTY_GAMES: Game[] = [];
 
 function colorFor(court: Court): string {
   if (["closed", "temporarily_closed"].includes(court.status)) return "#8A8A86";
@@ -52,41 +55,52 @@ function createUserLocationMarker() {
 
 export function CourtsMap({
   courts,
+  games = EMPTY_GAMES,
   onBounds,
   onSelect,
+  onGameSelect,
   pickLocation,
   picked,
   initialCenter,
   userLocation,
   selectedCourtId,
+  selectedGameId,
   focusLocationRequest,
 }: {
   courts: Court[];
+  games?: Game[];
   onBounds?: (bounds: Bounds) => void;
   onSelect?: (id: number) => void;
+  onGameSelect?: (id: number) => void;
   pickLocation?: (location: { lat: number; lon: number }) => void;
   picked?: { lat: number; lon: number };
   initialCenter?: { lat: number; lon: number };
   userLocation?: { lat: number; lon: number };
   selectedCourtId?: number | null;
+  selectedGameId?: number | null;
   focusLocationRequest?: number;
 }) {
+  const [mapReady, setMapReady] = useState(false);
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const pickedMarker = useRef<Marker | null>(null);
   const userMarker = useRef<Marker | null>(null);
+  const gameMarkers = useRef<Map<number, Marker>>(new Map());
   const userMovedMap = useRef(false);
   const lastCenteredCourtId = useRef<number | null>(null);
+  const lastCenteredGameId = useRef<number | null>(null);
   const latestCourts = useRef(courts);
   const latestInitialCenter = useRef(initialCenter);
   const latestUserLocation = useRef(userLocation);
   const latestSelectedCourtId = useRef(selectedCourtId);
   const latestBounds = useRef(onBounds);
   const latestSelect = useRef(onSelect);
+  const latestGameSelect = useRef(onGameSelect);
   const latestPick = useRef(pickLocation);
   useEffect(() => {
     latestBounds.current = onBounds;
     latestSelect.current = onSelect;
+    latestGameSelect.current = onGameSelect;
     latestPick.current = pickLocation;
     latestCourts.current = courts;
     latestInitialCenter.current = initialCenter;
@@ -95,6 +109,7 @@ export function CourtsMap({
   }, [
     onBounds,
     onSelect,
+    onGameSelect,
     pickLocation,
     courts,
     initialCenter,
@@ -105,6 +120,7 @@ export function CourtsMap({
   useEffect(() => {
     if (!container.current || map.current) return;
     let active = true;
+    const activeGameMarkers = gameMarkers.current;
     void import("maplibre-gl").then(({ default: maplibregl }) => {
       if (!active || !container.current) return;
       const instance = new maplibregl.Map({
@@ -242,6 +258,7 @@ export function CourtsMap({
           maxLon: bounds.getEast(),
           maxLat: bounds.getNorth(),
         });
+        setMapReady(true);
       });
       instance.on("moveend", () => {
         const bounds = instance.getBounds();
@@ -263,6 +280,8 @@ export function CourtsMap({
       active = false;
       pickedMarker.current?.remove();
       userMarker.current?.remove();
+      activeGameMarkers.forEach((marker) => marker.remove());
+      activeGameMarkers.clear();
       map.current?.remove();
       map.current = null;
     };
@@ -290,6 +309,82 @@ export function CourtsMap({
       duration: reduceMotion ? 0 : 420,
     });
   }, [courts, selectedCourtId]);
+
+  useEffect(() => {
+    if (!mapReady || !map.current) return;
+    let active = true;
+    const markers = gameMarkers.current;
+
+    void import("maplibre-gl").then(({ default: maplibregl }) => {
+      if (!active || !map.current) return;
+      markers.forEach((marker) => marker.remove());
+      markers.clear();
+
+      for (const group of groupGamesByCourt(games)) {
+        const element = document.createElement("button");
+        element.type = "button";
+        element.className = `game-map-marker ${
+          group.primary.id === selectedGameId ? "is-selected" : ""
+        }`;
+        element.setAttribute(
+          "aria-label",
+          `Игра «${group.primary.title}» на площадке ${group.court.name}`,
+        );
+        element.title =
+          group.games.length > 1
+            ? `${group.games.length} игры на площадке`
+            : group.primary.title;
+        element.innerHTML =
+          '<span class="game-map-marker__ball" aria-hidden="true"></span>';
+        if (group.games.length > 1) {
+          const count = document.createElement("span");
+          count.className = "game-map-marker__count";
+          count.textContent = String(group.games.length);
+          element.append(count);
+        }
+        element.addEventListener("click", (event) => {
+          event.stopPropagation();
+          latestGameSelect.current?.(group.primary.id);
+        });
+
+        const marker = new maplibregl.Marker({
+          element,
+          anchor: "center",
+        })
+          .setLngLat([group.court.location.lon, group.court.location.lat])
+          .addTo(map.current);
+        markers.set(group.court.id, marker);
+      }
+    });
+
+    return () => {
+      active = false;
+      markers.forEach((marker) => marker.remove());
+      markers.clear();
+    };
+  }, [games, mapReady, selectedGameId]);
+
+  useEffect(() => {
+    if (!selectedGameId || !map.current) {
+      lastCenteredGameId.current = null;
+      return;
+    }
+    if (lastCenteredGameId.current === selectedGameId) return;
+    const selected = games.find((game) => game.id === selectedGameId);
+    if (!selected) return;
+    lastCenteredGameId.current = selectedGameId;
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    map.current.easeTo({
+      center: [
+        selected.court_details.location.lon,
+        selected.court_details.location.lat,
+      ],
+      zoom: Math.max(map.current.getZoom(), 14),
+      duration: reduceMotion ? 0 : 420,
+    });
+  }, [games, selectedGameId]);
 
   useEffect(() => {
     if (!initialCenter || !map.current || userMovedMap.current) return;
