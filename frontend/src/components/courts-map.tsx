@@ -163,7 +163,15 @@ export function CourtsMap({
           source: "courts",
           filter: ["has", "point_count"],
           paint: {
-            "circle-color": "#20252B",
+            "circle-color": [
+              "step",
+              ["get", "point_count"],
+              "#F26A2E",
+              10,
+              "#D95822",
+              50,
+              "#20252B",
+            ],
             "circle-radius": [
               "step",
               ["get", "point_count"],
@@ -173,6 +181,9 @@ export function CourtsMap({
               50,
               28,
             ],
+            "circle-stroke-width": 3,
+            "circle-stroke-color": "#fff",
+            "circle-opacity": 0.94,
           },
         });
         instance.addLayer({
@@ -220,6 +231,8 @@ export function CourtsMap({
               3,
             ],
             "circle-stroke-color": "#fff",
+            "circle-stroke-opacity": 0.96,
+            "circle-translate": [0, -1],
           },
         });
         (instance.getSource("courts") as GeoJSONSource).setData(

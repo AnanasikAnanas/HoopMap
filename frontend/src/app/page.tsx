@@ -7,6 +7,7 @@ import {
   ShieldCheck,
   Trophy,
 } from "lucide-react";
+import { BasketballHero3D } from "@/components/basketball-hero-3d";
 import { Header, MobileNav } from "@/components/header";
 
 export default function HomePage() {
@@ -16,33 +17,36 @@ export default function HomePage() {
       <main>
         <section className="court-lines relative overflow-hidden border-b border-line px-4 py-20 lg:py-28">
           <div className="pointer-events-none absolute -right-40 top-8 h-[520px] w-[520px] rounded-full border-[40px] border-orange/10" />
-          <div className="relative mx-auto max-w-7xl">
-            <p className="mb-5 text-sm font-extrabold uppercase tracking-[.22em] text-orange">
-              Баскетбол рядом
-            </p>
-            <h1 className="display max-w-5xl text-4xl font-bold leading-tight md:text-6xl lg:text-7xl">
-              НАЙДИ ПЛОЩАДКУ.
-              <br />
-              <span className="text-orange">СОБЕРИ ИГРУ.</span>
-            </h1>
-            <p className="mt-7 max-w-2xl text-lg text-muted">
-              Живая карта баскетбольных площадок, актуальная информация от
-              игроков и открытые игры в твоём городе.
-            </p>
-            <div className="mt-9 flex flex-wrap gap-3">
-              <Link
-                href="/map"
-                className="flex min-h-12 items-center gap-2 rounded-full bg-orange px-6 font-bold text-white"
-              >
-                Открыть карту <ArrowRight size={18} />
-              </Link>
-              <Link
-                href="/courts/add"
-                className="flex min-h-12 items-center gap-2 rounded-full border border-line bg-surface px-6 font-bold text-ink"
-              >
-                <Plus size={18} /> Добавить площадку
-              </Link>
+          <div className="relative mx-auto grid max-w-7xl items-center gap-10 lg:grid-cols-[1.2fr_.8fr]">
+            <div>
+              <p className="mb-5 text-sm font-extrabold uppercase tracking-[.22em] text-orange">
+                Баскетбол рядом
+              </p>
+              <h1 className="display max-w-5xl text-4xl font-bold leading-tight md:text-6xl lg:text-7xl">
+                НАЙДИ ПЛОЩАДКУ.
+                <br />
+                <span className="text-orange">СОБЕРИ ИГРУ.</span>
+              </h1>
+              <p className="mt-7 max-w-2xl text-lg text-muted">
+                Живая карта баскетбольных площадок, актуальная информация от
+                игроков и открытые игры в твоём городе.
+              </p>
+              <div className="mt-9 flex flex-wrap gap-3">
+                <Link
+                  href="/map"
+                  className="flex min-h-12 items-center gap-2 rounded-full bg-orange px-6 font-bold text-white transition hover:-translate-y-0.5 hover:bg-[#d95822] hover:shadow-lg"
+                >
+                  Открыть карту <ArrowRight size={18} />
+                </Link>
+                <Link
+                  href="/courts/add"
+                  className="flex min-h-12 items-center gap-2 rounded-full border border-line bg-surface px-6 font-bold text-ink transition hover:-translate-y-0.5 hover:border-orange hover:text-orange"
+                >
+                  <Plus size={18} /> Добавить площадку
+                </Link>
+              </div>
             </div>
+            <BasketballHero3D />
           </div>
         </section>
         <section className="mx-auto max-w-7xl px-4 py-16">

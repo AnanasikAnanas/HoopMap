@@ -17,8 +17,9 @@ import { CourtsMap } from "@/components/courts-map";
 import { CourtCard } from "@/components/court-card";
 import { Header, MobileNav } from "@/components/header";
 import { MapFilterPanel } from "@/components/map-filter-panel";
+import { MapQuickFilters } from "@/components/map-quick-filters";
+import { MapCourtSheet } from "@/components/map-court-sheet";
 import { MapGameCard } from "@/components/map-game-card";
-import { MapGamesToggle } from "@/components/map-games-toggle";
 import { Button, Input } from "@/components/ui";
 import { ApiError, authApi, courtsApi, gamesApi } from "@/lib/api";
 import {
@@ -128,7 +129,7 @@ export default function MapPage() {
       }).toString(),
     [bbox],
   );
-  const { data: gamePage, isFetching: gamesLoading } = useQuery({
+  const { data: gamePage } = useQuery({
     queryKey: ["map-games", gameQuery],
     queryFn: () => gamesApi.list(gameQuery),
     enabled: showGames,
@@ -337,12 +338,19 @@ export default function MapPage() {
               />
             </div>
           </div>
-          <MapGamesToggle
-            active={showGames}
-            count={activeGames.length}
-            loading={gamesLoading}
-            onToggle={toggleGames}
-            className="mb-3 w-full shadow-none"
+          <MapQuickFilters
+            filters={filters}
+            showGames={showGames}
+            nearby={sortByDistance && Boolean(userLocation)}
+            nearbyDisabled={!userLocation}
+            onChange={updateFilters}
+            onToggleGames={toggleGames}
+            onToggleNearby={() => {
+              hapticSelection();
+              setSortByDistance((active) => !active);
+            }}
+            onReset={resetFilters}
+            className="mb-3"
           />
           <div className="mb-3 flex items-center justify-between gap-3">
             <p className="text-xs font-bold uppercase tracking-widest text-muted">
@@ -431,7 +439,7 @@ export default function MapPage() {
                 ? "Повторно запросить геопозицию"
                 : "Вернуться к моей геопозиции"
             }
-            className={`absolute right-3 top-[72px] z-10 grid h-12 w-12 place-items-center rounded-2xl border border-line bg-surface shadow-lg transition hover:-translate-y-0.5 hover:text-orange active:scale-95 disabled:cursor-wait md:top-[92px] ${
+            className={`absolute right-3 top-[124px] z-10 grid h-12 w-12 place-items-center rounded-2xl border border-line bg-surface shadow-lg transition hover:-translate-y-0.5 hover:text-orange active:scale-95 disabled:cursor-wait md:top-[92px] ${
               filtersOpen
                 ? "pointer-events-none scale-90 opacity-0 md:pointer-events-auto md:scale-100 md:opacity-100"
                 : ""
@@ -499,11 +507,7 @@ export default function MapPage() {
                   <X size={18} />
                 </button>
               </div>
-              <CourtCard
-                court={selected}
-                compact
-                className="border-0 shadow-none hover:translate-y-0 hover:shadow-none"
-              />
+              <MapCourtSheet court={selected} />
             </div>
           )}
           {selectedGame && (
@@ -536,21 +540,11 @@ export default function MapPage() {
             visible.length === 0 &&
             activeGames.length === 0 &&
             !filtersOpen && (
-              <div className="absolute left-3 top-[120px] z-10 inline-flex max-w-[calc(100%-24px)] items-center gap-2 rounded-full border border-line bg-surface px-3 py-2 text-xs font-bold text-ink shadow-lg md:hidden">
+              <div className="absolute left-3 top-[176px] z-10 inline-flex max-w-[calc(100%-24px)] items-center gap-2 rounded-full border border-line bg-surface px-3 py-2 text-xs font-bold text-ink shadow-lg md:hidden">
                 <SearchX size={15} className="shrink-0 text-orange" />
                 Ничего не найдено
               </div>
             )}
-          <MapGamesToggle
-            active={showGames}
-            count={activeGames.length}
-            loading={gamesLoading}
-            onToggle={toggleGames}
-            compact
-            className={`absolute left-3 top-[72px] z-10 md:hidden ${
-              filtersOpen ? "pointer-events-none scale-90 opacity-0" : ""
-            }`}
-          />
           <div className="absolute left-3 top-3 z-10 flex w-[calc(100%-24px)] gap-2 md:hidden">
             <div className="relative flex-1">
               <Input
@@ -588,8 +582,25 @@ export default function MapPage() {
               )}
             </button>
           </div>
+          <MapQuickFilters
+            filters={filters}
+            showGames={showGames}
+            nearby={sortByDistance && Boolean(userLocation)}
+            nearbyDisabled={!userLocation}
+            resultCount={visible.length}
+            onChange={updateFilters}
+            onToggleGames={toggleGames}
+            onToggleNearby={() => {
+              hapticSelection();
+              setSortByDistance((active) => !active);
+            }}
+            onReset={resetFilters}
+            className={`absolute left-3 right-3 top-[72px] z-10 md:hidden ${
+              filtersOpen ? "pointer-events-none -translate-y-2 opacity-0" : ""
+            }`}
+          />
           <div
-            className={`map-filter-popover absolute left-3 right-3 top-[72px] z-20 md:hidden ${
+            className={`map-filter-popover absolute left-3 right-3 top-[124px] z-20 md:hidden ${
               filtersOpen ? "is-open" : ""
             }`}
             aria-hidden={!filtersOpen}
