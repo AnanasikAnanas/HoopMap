@@ -42,6 +42,14 @@ function courtGeoJson(courts: Court[], selectedCourtId?: number | null) {
   };
 }
 
+function createUserLocationMarker() {
+  const marker = document.createElement("div");
+  marker.className = "user-location-marker";
+  marker.setAttribute("aria-hidden", "true");
+  marker.innerHTML = '<span class="user-location-marker__dot"></span>';
+  return marker;
+}
+
 export function CourtsMap({
   courts,
   onBounds,
@@ -51,6 +59,7 @@ export function CourtsMap({
   initialCenter,
   userLocation,
   selectedCourtId,
+  focusLocationRequest,
 }: {
   courts: Court[];
   onBounds?: (bounds: Bounds) => void;
@@ -60,6 +69,7 @@ export function CourtsMap({
   initialCenter?: { lat: number; lon: number };
   userLocation?: { lat: number; lon: number };
   selectedCourtId?: number | null;
+  focusLocationRequest?: number;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
@@ -103,16 +113,16 @@ export function CourtsMap({
           process.env.NEXT_PUBLIC_MAP_STYLE_URL ??
           "https://tiles.openfreemap.org/styles/liberty",
         center: latestInitialCenter.current
-          ? [
-              latestInitialCenter.current.lon,
-              latestInitialCenter.current.lat,
-            ]
+          ? [latestInitialCenter.current.lon, latestInitialCenter.current.lat]
           : [49.4, 53.5],
         zoom: latestInitialCenter.current ? 13 : 11,
       });
       map.current = instance;
       if (latestUserLocation.current) {
-        userMarker.current = new maplibregl.Marker({ color: "#2780E3" })
+        userMarker.current = new maplibregl.Marker({
+          element: createUserLocationMarker(),
+          anchor: "center",
+        })
           .setLngLat([
             latestUserLocation.current.lon,
             latestUserLocation.current.lat,
@@ -185,12 +195,7 @@ export function CourtsMap({
           filter: ["!", ["has", "point_count"]],
           paint: {
             "circle-color": ["get", "color"],
-            "circle-radius": [
-              "case",
-              ["==", ["get", "selected"], true],
-              12,
-              9,
-            ],
+            "circle-radius": ["case", ["==", ["get", "selected"], true], 12, 9],
             "circle-radius-transition": { duration: 180 },
             "circle-stroke-width": [
               "case",
@@ -202,10 +207,7 @@ export function CourtsMap({
           },
         });
         (instance.getSource("courts") as GeoJSONSource).setData(
-          courtGeoJson(
-            latestCourts.current,
-            latestSelectedCourtId.current,
-          ),
+          courtGeoJson(latestCourts.current, latestSelectedCourtId.current),
         );
         instance.on("click", "court-points", (event) => {
           const id = event.features?.[0]?.properties?.id as number | undefined;
@@ -302,11 +304,26 @@ export function CourtsMap({
     void import("maplibre-gl").then(({ default: maplibregl }) => {
       if (!map.current) return;
       userMarker.current?.remove();
-      userMarker.current = new maplibregl.Marker({ color: "#2780E3" })
+      userMarker.current = new maplibregl.Marker({
+        element: createUserLocationMarker(),
+        anchor: "center",
+      })
         .setLngLat([userLocation.lon, userLocation.lat])
         .addTo(map.current);
     });
   }, [userLocation]);
+
+  useEffect(() => {
+    if (!focusLocationRequest || !userLocation || !map.current) return;
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    map.current.easeTo({
+      center: [userLocation.lon, userLocation.lat],
+      zoom: Math.max(map.current.getZoom(), 14),
+      duration: reduceMotion ? 0 : 520,
+    });
+  }, [focusLocationRequest, userLocation]);
 
   useEffect(() => {
     if (!picked || !map.current) return;
