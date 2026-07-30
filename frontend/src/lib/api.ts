@@ -4,6 +4,9 @@ import type {
   NotificationSettings,
   Page,
   PushSubscriptionInput,
+  SocialOverview,
+  SocialSearchResult,
+  Team,
   User,
 } from "./types";
 import { createClient } from "@supabase/supabase-js";
@@ -144,6 +147,60 @@ export const gamesApi = {
     }),
   join: (id: number) => api<Game>(`/games/${id}/join/`, { method: "POST" }),
   leave: (id: number) => api<Game>(`/games/${id}/leave/`, { method: "POST" }),
+  invite: (id: number, input: { user_ids?: number[]; team_id?: number }) =>
+    api<{ invited: number }>(`/games/${id}/invite/`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  respondToInvitation: (id: number, action: "accept" | "decline") =>
+    api<Game>(`/games/${id}/invite-response/`, {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    }),
+};
+
+export const socialApi = {
+  overview: () => api<SocialOverview>("/social/overview/"),
+  search: (query: string) =>
+    api<SocialSearchResult[]>(`/social/search/?q=${encodeURIComponent(query)}`),
+  requestFriend: (userId: number) =>
+    api<SocialOverview>("/friends/requests/", {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+    }),
+  respondToFriend: (friendshipId: number, action: "accept" | "decline") =>
+    api<SocialOverview>(`/friends/${friendshipId}/${action}/`, {
+      method: "POST",
+      body: "{}",
+    }),
+  removeFriend: (friendshipId: number) =>
+    api<SocialOverview>(`/friends/${friendshipId}/`, { method: "DELETE" }),
+  createTeam: (input: { name: string; description: string }) =>
+    api<Team>("/teams/", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  oneTeam: (teamId: number) => api<Team>(`/teams/${teamId}/`),
+  inviteToTeam: (teamId: number, userId: number) =>
+    api<Team>(`/teams/${teamId}/invite/`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+    }),
+  respondToTeam: (teamId: number, action: "accept" | "decline") =>
+    api<SocialOverview>(`/teams/${teamId}/${action}/`, {
+      method: "POST",
+      body: "{}",
+    }),
+  leaveTeam: (teamId: number) =>
+    api<SocialOverview>(`/teams/${teamId}/leave/`, {
+      method: "POST",
+      body: "{}",
+    }),
+  removeTeamMember: (teamId: number, userId: number) =>
+    api<Team>(`/teams/${teamId}/members/`, {
+      method: "DELETE",
+      body: JSON.stringify({ user_id: userId }),
+    }),
 };
 
 export const notificationsApi = {

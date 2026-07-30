@@ -1190,6 +1190,14 @@ async function gameMembership(
     }
     throw result.error;
   }
+  if (action === "join") {
+    await createServiceClient()
+      .from("game_invitations")
+      .update({ status: "accepted", responded_at: new Date().toISOString() })
+      .eq("game_id", gameId)
+      .eq("invitee_id", current!.profile.id)
+      .eq("status", "pending");
+  }
   if (Number(game.creator_id) !== current!.profile.id) {
     const playerName = profileDisplayName(current!.profile);
     await notifyGameProfiles(
@@ -1205,6 +1213,821 @@ async function gameMembership(
       `game-${gameId}-${action}-${current!.profile.id}`,
     );
   }
+  return oneGame(request, gameId);
+}
+
+const socialProfileSelect =
+  "id,username,first_name,last_name,avatar_url,role,reputation";
+
+function friendshipStatus(
+  records: any[],
+  currentProfileId: number,
+  otherProfileId: number,
+): "none" | "incoming" | "outgoing" | "accepted" {
+  const record = records.find(
+    (item) =>
+      (Number(item.requester_id) === currentProfileId &&
+        Number(item.addressee_id) === otherProfileId) ||
+      (Number(item.addressee_id) === currentProfileId &&
+        Number(item.requester_id) === otherProfileId),
+  );
+  if (!record) return "none";
+  if (record.status === "accepted") return "accepted";
+  return Number(record.requester_id) === currentProfileId
+    ? "outgoing"
+    : "incoming";
+}
+
+function serializeFriendship(record: any, currentProfileId: number) {
+  const incoming = Number(record.addressee_id) === currentProfileId;
+  return {
+    id: Number(record.id),
+    status: record.status,
+    direction: incoming ? "incoming" : "outgoing",
+    user: publicUser(incoming ? record.requester : record.addressee),
+    created_at: record.created_at,
+    updated_at: record.updated_at,
+  };
+}
+
+function serializeTeam(record: any, membership: any) {
+  const activeMembers = (record.members ?? []).filter(
+    (item: any) => item.status === "active",
+  );
+  return {
+    id: Number(record.id),
+    name: record.name,
+    description: record.description ?? "",
+    owner: publicUser(record.owner),
+    my_role: membership.role,
+    my_status: membership.status,
+    members_count: activeMembers.length,
+    members: (record.members ?? [])
+      .map((item: any) => ({
+        user: publicUser(item.profile),
+        role: item.role,
+        status: item.status,
+        joined_at: item.joined_at,
+      }))
+      .filter((item: any) => item.user),
+    created_at: record.created_at,
+  };
+}
+
+async function teamForProfile(teamId: number, profileId: number) {
+  const service = createServiceClient();
+  const membership = await service
+    .from("team_members")
+    .select("team_id,user_id,role,status")
+    .eq("team_id", teamId)
+    .eq("user_id", profileId)
+    .maybeSingle();
+  if (membership.error) throw membership.error;
+  if (!membership.data) throw new HttpError(404, "Команда не найдена");
+  const team = await service
+    .from("teams")
+    .select(
+      `*,owner:profiles!teams_owner_id_fkey(${socialProfileSelect}),members:team_members(team_id,user_id,role,status,joined_at,profile:profiles!team_members_user_id_fkey(${socialProfileSelect}))`,
+    )
+    .eq("id", teamId)
+    .maybeSingle();
+  if (team.error) throw team.error;
+  if (!team.data) throw new HttpError(404, "Команда не найдена");
+  return serializeTeam(team.data, membership.data);
+}
+
+async function socialOverviewData(profileId: number) {
+  const service = createServiceClient();
+  const relationships = await service
+    .from("friendships")
+    .select(
+      `*,requester:profiles!friendships_requester_id_fkey(${socialProfileSelect}),addressee:profiles!friendships_addressee_id_fkey(${socialProfileSelect})`,
+    )
+    .or(`requester_id.eq.${profileId},addressee_id.eq.${profileId}`)
+    .order("updated_at", { ascending: false });
+  if (relationships.error) throw relationships.error;
+  const friendshipRecords = relationships.data ?? [];
+  const serializedRelationships = friendshipRecords
+    .map((record) => serializeFriendship(record, profileId))
+    .filter((record) => record.user);
+
+  const memberships = await service
+    .from("team_members")
+    .select("team_id,user_id,role,status,created_at")
+    .eq("user_id", profileId)
+    .order("created_at", { ascending: false });
+  if (memberships.error) throw memberships.error;
+  const membershipRecords = memberships.data ?? [];
+  const teamIds = membershipRecords.map((item) => Number(item.team_id));
+  let teams: any[] = [];
+  if (teamIds.length) {
+    const teamRecords = await service
+      .from("teams")
+      .select(
+        `*,owner:profiles!teams_owner_id_fkey(${socialProfileSelect}),members:team_members(team_id,user_id,role,status,joined_at,profile:profiles!team_members_user_id_fkey(${socialProfileSelect}))`,
+      )
+      .in("id", teamIds);
+    if (teamRecords.error) throw teamRecords.error;
+    const membershipByTeam = new Map(
+      membershipRecords.map((item) => [Number(item.team_id), item]),
+    );
+    teams = (teamRecords.data ?? [])
+      .map((team) => serializeTeam(team, membershipByTeam.get(Number(team.id))))
+      .sort((left, right) => left.name.localeCompare(right.name, "ru"));
+  }
+
+  const invitations = await service
+    .from("game_invitations")
+    .select(
+      `id,status,created_at,game:games!game_invitations_game_id_fkey(id,title,starts_at,status,court:courts!games_court_id_fkey(name)),inviter:profiles!game_invitations_inviter_id_fkey(${socialProfileSelect}),team:teams!game_invitations_team_id_fkey(id,name)`,
+    )
+    .eq("invitee_id", profileId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: false });
+  if (invitations.error) throw invitations.error;
+  const gameInvitations = (invitations.data ?? [])
+    .filter(
+      (record: any) =>
+        record.game &&
+        record.game.status === "scheduled" &&
+        Date.parse(record.game.starts_at) > Date.now(),
+    )
+    .map((record: any) => ({
+      id: Number(record.id),
+      status: record.status,
+      created_at: record.created_at,
+      game: {
+        id: Number(record.game.id),
+        title: record.game.title,
+        starts_at: record.game.starts_at,
+        court_name: record.game.court?.name ?? "",
+      },
+      inviter: publicUser(record.inviter),
+      team: record.team
+        ? { id: Number(record.team.id), name: record.team.name }
+        : null,
+    }));
+
+  const myGames = await service
+    .from("game_participants")
+    .select("game_id,game:games!game_participants_game_id_fkey(starts_at)")
+    .eq("user_id", profileId)
+    .eq("status", "joined")
+    .order("joined_at", { ascending: false })
+    .limit(30);
+  if (myGames.error) throw myGames.error;
+  const pastGameIds = (myGames.data ?? [])
+    .filter(
+      (item: any) =>
+        item.game?.starts_at && Date.parse(item.game.starts_at) <= Date.now(),
+    )
+    .map((item) => Number(item.game_id));
+  const recentByProfile = new Map<
+    number,
+    { profile: any; last_played_at: string; games_together: number }
+  >();
+  if (pastGameIds.length) {
+    const participants = await service
+      .from("game_participants")
+      .select(
+        `user_id,status,profile:profiles!game_participants_user_id_fkey(${socialProfileSelect}),game:games!game_participants_game_id_fkey(id,starts_at)`,
+      )
+      .in("game_id", pastGameIds)
+      .eq("status", "joined");
+    if (participants.error) throw participants.error;
+    for (const item of participants.data ?? []) {
+      const otherId = Number(item.user_id);
+      if (otherId === profileId || !item.profile || !item.game) continue;
+      const existing = recentByProfile.get(otherId);
+      const playedAt = (item.game as any).starts_at;
+      recentByProfile.set(otherId, {
+        profile: item.profile,
+        last_played_at:
+          !existing ||
+          Date.parse(playedAt) > Date.parse(existing.last_played_at)
+            ? playedAt
+            : existing.last_played_at,
+        games_together: (existing?.games_together ?? 0) + 1,
+      });
+    }
+  }
+  const recentPlayers = Array.from(recentByProfile.entries())
+    .map(([otherId, item]) => ({
+      ...publicUser(item.profile),
+      last_played_at: item.last_played_at,
+      games_together: item.games_together,
+      friendship_status: friendshipStatus(
+        friendshipRecords,
+        profileId,
+        otherId,
+      ),
+    }))
+    .sort(
+      (left, right) =>
+        Date.parse(right.last_played_at) - Date.parse(left.last_played_at),
+    )
+    .slice(0, 12);
+
+  return {
+    friends: serializedRelationships.filter(
+      (record) => record.status === "accepted",
+    ),
+    incoming_requests: serializedRelationships.filter(
+      (record) =>
+        record.status === "pending" && record.direction === "incoming",
+    ),
+    outgoing_requests: serializedRelationships.filter(
+      (record) =>
+        record.status === "pending" && record.direction === "outgoing",
+    ),
+    teams,
+    game_invitations: gameInvitations,
+    recent_players: recentPlayers,
+  };
+}
+
+async function socialOverview(request: NextRequest) {
+  const current = await identity(request, true);
+  return json(await socialOverviewData(current!.profile.id));
+}
+
+async function searchSocialProfiles(request: NextRequest) {
+  const current = await identity(request, true);
+  await rateLimit(request, "social-search", 120, 3600, current!.profile.id);
+  const parsed = z
+    .string()
+    .trim()
+    .min(2)
+    .max(50)
+    .safeParse(request.nextUrl.searchParams.get("q") ?? "");
+  if (!parsed.success) throw new HttpError(400, "Введите минимум 2 символа");
+  const query = parsed.data.replace(/[%_]/g, "");
+  if (query.length < 2) throw new HttpError(400, "Некорректный поиск");
+  const service = createServiceClient();
+  const fields = ["username", "first_name", "last_name"] as const;
+  const searches = await Promise.all(
+    fields.map((field) =>
+      service
+        .from("profiles")
+        .select(socialProfileSelect)
+        .ilike(field, `%${query}%`)
+        .neq("id", current!.profile.id)
+        .limit(12),
+    ),
+  );
+  const byId = new Map<number, any>();
+  for (const result of searches) {
+    if (result.error) throw result.error;
+    for (const profile of result.data ?? []) {
+      byId.set(Number(profile.id), profile);
+    }
+  }
+  const profileIds = Array.from(byId.keys());
+  let relationships: any[] = [];
+  if (profileIds.length) {
+    const result = await service
+      .from("friendships")
+      .select("*")
+      .or(
+        `and(requester_id.eq.${current!.profile.id},addressee_id.in.(${profileIds.join(",")})),and(addressee_id.eq.${current!.profile.id},requester_id.in.(${profileIds.join(",")}))`,
+      );
+    if (result.error) throw result.error;
+    relationships = result.data ?? [];
+  }
+  return json(
+    Array.from(byId.entries())
+      .map(([profileId, profile]) => ({
+        ...publicUser(profile),
+        friendship_status: friendshipStatus(
+          relationships,
+          current!.profile.id,
+          profileId,
+        ),
+      }))
+      .sort((left, right) => {
+        const leftName =
+          `${left.first_name ?? ""} ${left.last_name ?? ""}`.trim() ||
+          left.username ||
+          "";
+        const rightName =
+          `${right.first_name ?? ""} ${right.last_name ?? ""}`.trim() ||
+          right.username ||
+          "";
+        return leftName.localeCompare(rightName, "ru");
+      })
+      .slice(0, 20),
+  );
+}
+
+async function requestFriendship(request: NextRequest) {
+  const current = await identity(request, true);
+  await rateLimit(request, "friend-request", 30, 3600, current!.profile.id);
+  const parsed = z
+    .object({ user_id: z.number().int().positive() })
+    .safeParse(await body(request));
+  if (!parsed.success) throw new HttpError(400, "Некорректный пользователь");
+  const targetId = parsed.data.user_id;
+  if (targetId === current!.profile.id)
+    throw new HttpError(400, "Нельзя добавить в друзья самого себя");
+  const service = createServiceClient();
+  const target = await service
+    .from("profiles")
+    .select(socialProfileSelect)
+    .eq("id", targetId)
+    .maybeSingle();
+  if (target.error) throw target.error;
+  if (!target.data) throw new HttpError(404, "Пользователь не найден");
+  const existing = await service
+    .from("friendships")
+    .select("*")
+    .or(
+      `and(requester_id.eq.${current!.profile.id},addressee_id.eq.${targetId}),and(requester_id.eq.${targetId},addressee_id.eq.${current!.profile.id})`,
+    )
+    .maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data?.status === "accepted")
+    throw new HttpError(409, "Пользователь уже в друзьях");
+  if (
+    existing.data?.status === "pending" &&
+    Number(existing.data.addressee_id) === current!.profile.id
+  ) {
+    const accepted = await service
+      .from("friendships")
+      .update({ status: "accepted" })
+      .eq("id", existing.data.id);
+    if (accepted.error) throw accepted.error;
+  } else if (existing.data) {
+    throw new HttpError(409, "Заявка уже отправлена");
+  } else {
+    const created = await service.from("friendships").insert({
+      requester_id: current!.profile.id,
+      addressee_id: targetId,
+      status: "pending",
+    });
+    if (created.error) throw created.error;
+    const sender = profileDisplayName(current!.profile);
+    await notifyGameProfiles(
+      [targetId],
+      `🏀 ${sender} хочет добавить вас в друзья в HOOPMAP.`,
+      "Новая заявка в друзья",
+      `${sender} хочет добавить вас в друзья`,
+      "/community",
+      `friend-request-${current!.profile.id}-${targetId}`,
+    );
+  }
+  return json(await socialOverviewData(current!.profile.id));
+}
+
+async function respondToFriendship(
+  request: NextRequest,
+  friendshipId: number,
+  action: "accept" | "decline",
+) {
+  const current = await identity(request, true);
+  await rateLimit(request, "friend-response", 60, 3600, current!.profile.id);
+  const service = createServiceClient();
+  const relationship = await service
+    .from("friendships")
+    .select("*")
+    .eq("id", friendshipId)
+    .maybeSingle();
+  if (relationship.error) throw relationship.error;
+  if (
+    !relationship.data ||
+    relationship.data.status !== "pending" ||
+    Number(relationship.data.addressee_id) !== current!.profile.id
+  ) {
+    throw new HttpError(404, "Заявка не найдена");
+  }
+  const result =
+    action === "accept"
+      ? await service
+          .from("friendships")
+          .update({ status: "accepted" })
+          .eq("id", friendshipId)
+      : await service.from("friendships").delete().eq("id", friendshipId);
+  if (result.error) throw result.error;
+  if (action === "accept") {
+    const name = profileDisplayName(current!.profile);
+    await notifyGameProfiles(
+      [Number(relationship.data.requester_id)],
+      `🙌 ${name} принял вашу заявку в друзья.`,
+      "Заявка принята",
+      `${name} теперь у вас в друзьях`,
+      "/community",
+      `friend-accepted-${friendshipId}`,
+    );
+  }
+  return json(await socialOverviewData(current!.profile.id));
+}
+
+async function removeFriendship(request: NextRequest, friendshipId: number) {
+  const current = await identity(request, true);
+  const service = createServiceClient();
+  const relationship = await service
+    .from("friendships")
+    .select("id,requester_id,addressee_id")
+    .eq("id", friendshipId)
+    .maybeSingle();
+  if (relationship.error) throw relationship.error;
+  if (
+    !relationship.data ||
+    ![
+      Number(relationship.data.requester_id),
+      Number(relationship.data.addressee_id),
+    ].includes(current!.profile.id)
+  ) {
+    throw new HttpError(404, "Связь не найдена");
+  }
+  const removed = await service
+    .from("friendships")
+    .delete()
+    .eq("id", friendshipId);
+  if (removed.error) throw removed.error;
+  return json(await socialOverviewData(current!.profile.id));
+}
+
+const teamInput = z.object({
+  name: z.string().trim().min(3).max(80),
+  description: z.string().trim().max(500).default(""),
+});
+
+async function createTeam(request: NextRequest) {
+  const current = await identity(request, true);
+  await rateLimit(request, "team-create", 10, 86400, current!.profile.id);
+  const parsed = teamInput.safeParse(await body(request));
+  if (!parsed.success)
+    throw new HttpError(400, "Проверьте название и описание команды");
+  const service = createServiceClient();
+  const created = await service
+    .from("teams")
+    .insert({ owner_id: current!.profile.id, ...parsed.data })
+    .select("id")
+    .single();
+  if (created.error) throw created.error;
+  const membership = await service.from("team_members").insert({
+    team_id: created.data.id,
+    user_id: current!.profile.id,
+    role: "owner",
+    status: "active",
+    invited_by: current!.profile.id,
+    joined_at: new Date().toISOString(),
+  });
+  if (membership.error) {
+    await service.from("teams").delete().eq("id", created.data.id);
+    throw membership.error;
+  }
+  return json(
+    await teamForProfile(Number(created.data.id), current!.profile.id),
+  );
+}
+
+async function oneTeam(request: NextRequest, teamId: number) {
+  const current = await identity(request, true);
+  return json(await teamForProfile(teamId, current!.profile.id));
+}
+
+async function inviteToTeam(request: NextRequest, teamId: number) {
+  const current = await identity(request, true);
+  await rateLimit(request, "team-invite", 60, 3600, current!.profile.id);
+  const parsed = z
+    .object({ user_id: z.number().int().positive() })
+    .safeParse(await body(request));
+  if (!parsed.success) throw new HttpError(400, "Некорректный пользователь");
+  const targetId = parsed.data.user_id;
+  if (targetId === current!.profile.id)
+    throw new HttpError(400, "Вы уже в команде");
+  const service = createServiceClient();
+  const membership = await service
+    .from("team_members")
+    .select("role,status")
+    .eq("team_id", teamId)
+    .eq("user_id", current!.profile.id)
+    .maybeSingle();
+  if (membership.error) throw membership.error;
+  if (
+    !membership.data ||
+    membership.data.status !== "active" ||
+    !["owner", "admin"].includes(membership.data.role)
+  ) {
+    throw new HttpError(403, "Приглашать может владелец или администратор");
+  }
+  const friendship = await service
+    .from("friendships")
+    .select("id")
+    .eq("status", "accepted")
+    .or(
+      `and(requester_id.eq.${current!.profile.id},addressee_id.eq.${targetId}),and(requester_id.eq.${targetId},addressee_id.eq.${current!.profile.id})`,
+    )
+    .maybeSingle();
+  if (friendship.error) throw friendship.error;
+  if (!friendship.data)
+    throw new HttpError(409, "Сначала добавьте игрока в друзья");
+  const existing = await service
+    .from("team_members")
+    .select("status")
+    .eq("team_id", teamId)
+    .eq("user_id", targetId)
+    .maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data)
+    throw new HttpError(
+      409,
+      existing.data.status === "active"
+        ? "Игрок уже в команде"
+        : "Приглашение уже отправлено",
+    );
+  const invited = await service.from("team_members").insert({
+    team_id: teamId,
+    user_id: targetId,
+    role: "member",
+    status: "invited",
+    invited_by: current!.profile.id,
+  });
+  if (invited.error) throw invited.error;
+  const team = await service
+    .from("teams")
+    .select("name")
+    .eq("id", teamId)
+    .single();
+  if (team.error) throw team.error;
+  await notifyGameProfiles(
+    [targetId],
+    `🏀 Вас пригласили в команду «${team.data.name}».`,
+    "Приглашение в команду",
+    `Вас пригласили в «${team.data.name}»`,
+    "/community",
+    `team-invite-${teamId}-${targetId}`,
+  );
+  return json(await teamForProfile(teamId, current!.profile.id));
+}
+
+async function respondToTeamInvitation(
+  request: NextRequest,
+  teamId: number,
+  action: "accept" | "decline",
+) {
+  const current = await identity(request, true);
+  const service = createServiceClient();
+  const membership = await service
+    .from("team_members")
+    .select("status")
+    .eq("team_id", teamId)
+    .eq("user_id", current!.profile.id)
+    .maybeSingle();
+  if (membership.error) throw membership.error;
+  if (!membership.data || membership.data.status !== "invited")
+    throw new HttpError(404, "Приглашение не найдено");
+  const result =
+    action === "accept"
+      ? await service
+          .from("team_members")
+          .update({ status: "active", joined_at: new Date().toISOString() })
+          .eq("team_id", teamId)
+          .eq("user_id", current!.profile.id)
+      : await service
+          .from("team_members")
+          .delete()
+          .eq("team_id", teamId)
+          .eq("user_id", current!.profile.id);
+  if (result.error) throw result.error;
+  return json(await socialOverviewData(current!.profile.id));
+}
+
+async function leaveTeam(request: NextRequest, teamId: number) {
+  const current = await identity(request, true);
+  const service = createServiceClient();
+  const membership = await service
+    .from("team_members")
+    .select("role,status")
+    .eq("team_id", teamId)
+    .eq("user_id", current!.profile.id)
+    .maybeSingle();
+  if (membership.error) throw membership.error;
+  if (!membership.data) throw new HttpError(404, "Команда не найдена");
+  if (membership.data.role === "owner")
+    throw new HttpError(409, "Владелец не может покинуть команду");
+  const removed = await service
+    .from("team_members")
+    .delete()
+    .eq("team_id", teamId)
+    .eq("user_id", current!.profile.id);
+  if (removed.error) throw removed.error;
+  return json(await socialOverviewData(current!.profile.id));
+}
+
+async function removeTeamMember(request: NextRequest, teamId: number) {
+  const current = await identity(request, true);
+  const parsed = z
+    .object({ user_id: z.number().int().positive() })
+    .safeParse(await body(request));
+  if (!parsed.success) throw new HttpError(400, "Некорректный участник");
+  const service = createServiceClient();
+  const [actor, target] = await Promise.all([
+    service
+      .from("team_members")
+      .select("role,status")
+      .eq("team_id", teamId)
+      .eq("user_id", current!.profile.id)
+      .maybeSingle(),
+    service
+      .from("team_members")
+      .select("role,status")
+      .eq("team_id", teamId)
+      .eq("user_id", parsed.data.user_id)
+      .maybeSingle(),
+  ]);
+  if (actor.error) throw actor.error;
+  if (target.error) throw target.error;
+  if (
+    !actor.data ||
+    actor.data.status !== "active" ||
+    !["owner", "admin"].includes(actor.data.role)
+  ) {
+    throw new HttpError(403, "Недостаточно прав");
+  }
+  if (!target.data) throw new HttpError(404, "Участник не найден");
+  if (
+    target.data.role === "owner" ||
+    (actor.data.role === "admin" && target.data.role === "admin")
+  ) {
+    throw new HttpError(403, "Этого участника может удалить только владелец");
+  }
+  const removed = await service
+    .from("team_members")
+    .delete()
+    .eq("team_id", teamId)
+    .eq("user_id", parsed.data.user_id);
+  if (removed.error) throw removed.error;
+  return json(await teamForProfile(teamId, current!.profile.id));
+}
+
+async function inviteToGame(request: NextRequest, gameId: number) {
+  const current = await identity(request, true);
+  await rateLimit(request, "game-invite", 100, 3600, current!.profile.id);
+  const parsed = z
+    .object({
+      user_ids: z.array(z.number().int().positive()).max(50).optional(),
+      team_id: z.number().int().positive().optional(),
+    })
+    .refine(
+      (value) => Boolean(value.team_id) !== Boolean(value.user_ids?.length),
+      "Выберите игроков или команду",
+    )
+    .safeParse(await body(request));
+  if (!parsed.success) throw new HttpError(400, "Выберите друзей или команду");
+  const service = createServiceClient();
+  const game = await service
+    .from("games")
+    .select("id,title,creator_id,status,starts_at")
+    .eq("id", gameId)
+    .maybeSingle();
+  if (game.error) throw game.error;
+  if (!game.data) throw new HttpError(404, "Игра не найдена");
+  if (Number(game.data.creator_id) !== current!.profile.id)
+    throw new HttpError(403, "Приглашать может только организатор");
+  if (
+    game.data.status !== "scheduled" ||
+    Date.parse(game.data.starts_at) <= Date.now()
+  ) {
+    throw new HttpError(409, "В эту игру уже нельзя приглашать");
+  }
+
+  let targetIds = Array.from(new Set(parsed.data.user_ids ?? []));
+  let sourceTeamId: number | null = null;
+  if (parsed.data.team_id) {
+    sourceTeamId = parsed.data.team_id;
+    const myMembership = await service
+      .from("team_members")
+      .select("status")
+      .eq("team_id", sourceTeamId)
+      .eq("user_id", current!.profile.id)
+      .eq("status", "active")
+      .maybeSingle();
+    if (myMembership.error) throw myMembership.error;
+    if (!myMembership.data)
+      throw new HttpError(403, "Можно приглашать только свою команду");
+    const members = await service
+      .from("team_members")
+      .select("user_id")
+      .eq("team_id", sourceTeamId)
+      .eq("status", "active");
+    if (members.error) throw members.error;
+    targetIds = (members.data ?? []).map((item) => Number(item.user_id));
+  } else if (targetIds.length) {
+    const friendships = await service
+      .from("friendships")
+      .select("requester_id,addressee_id")
+      .eq("status", "accepted")
+      .or(
+        `and(requester_id.eq.${current!.profile.id},addressee_id.in.(${targetIds.join(",")})),and(addressee_id.eq.${current!.profile.id},requester_id.in.(${targetIds.join(",")}))`,
+      );
+    if (friendships.error) throw friendships.error;
+    const allowed = new Set<number>();
+    for (const friendship of friendships.data ?? []) {
+      allowed.add(
+        Number(friendship.requester_id) === current!.profile.id
+          ? Number(friendship.addressee_id)
+          : Number(friendship.requester_id),
+      );
+    }
+    targetIds = targetIds.filter((profileId) => allowed.has(profileId));
+  }
+  targetIds = targetIds.filter(
+    (profileId) => profileId !== current!.profile.id,
+  );
+  if (!targetIds.length) throw new HttpError(409, "Некого приглашать");
+  const participants = await service
+    .from("game_participants")
+    .select("user_id")
+    .eq("game_id", gameId)
+    .eq("status", "joined");
+  if (participants.error) throw participants.error;
+  const joined = new Set(
+    (participants.data ?? []).map((item) => Number(item.user_id)),
+  );
+  targetIds = targetIds.filter((profileId) => !joined.has(profileId));
+  if (!targetIds.length) throw new HttpError(409, "Все уже участвуют в игре");
+  const invitationRows = targetIds.map((profileId) => ({
+    game_id: gameId,
+    inviter_id: current!.profile.id,
+    invitee_id: profileId,
+    team_id: sourceTeamId,
+    status: "pending",
+    responded_at: null,
+  }));
+  const inserted = await service
+    .from("game_invitations")
+    .upsert(invitationRows, { onConflict: "game_id,invitee_id" });
+  if (inserted.error) throw inserted.error;
+  const sender = profileDisplayName(current!.profile);
+  await notifyGameProfiles(
+    targetIds,
+    `🏀 ${sender} приглашает вас на игру «${game.data.title}».`,
+    "Приглашение на игру",
+    `${sender} приглашает на «${game.data.title}»`,
+    `/games/${gameId}`,
+    `game-${gameId}-invitation`,
+  );
+  return json({ invited: targetIds.length });
+}
+
+async function respondToGameInvitation(request: NextRequest, gameId: number) {
+  const current = await identity(request, true);
+  const parsed = z
+    .object({ action: z.enum(["accept", "decline"]) })
+    .safeParse(await body(request));
+  if (!parsed.success) throw new HttpError(400, "Некорректное действие");
+  const service = createServiceClient();
+  const invitation = await service
+    .from("game_invitations")
+    .select(
+      "id,status,inviter_id,game:games!game_invitations_game_id_fkey(title)",
+    )
+    .eq("game_id", gameId)
+    .eq("invitee_id", current!.profile.id)
+    .eq("status", "pending")
+    .maybeSingle();
+  if (invitation.error) throw invitation.error;
+  if (!invitation.data) throw new HttpError(404, "Приглашение не найдено");
+  if (parsed.data.action === "decline") {
+    const declined = await service
+      .from("game_invitations")
+      .update({ status: "declined", responded_at: new Date().toISOString() })
+      .eq("id", invitation.data.id);
+    if (declined.error) throw declined.error;
+    return oneGame(request, gameId);
+  }
+  const joined = await current!.client.rpc("join_game", {
+    target_game_id: gameId,
+  });
+  if (joined.error) {
+    const message = joined.error.message;
+    if (message.includes("Game is full"))
+      throw new HttpError(409, "В игре больше нет свободных мест");
+    if (message.includes("Already joined")) {
+      // The invitation can still be marked accepted after a direct join.
+    } else if (message.includes("Game cannot be joined")) {
+      throw new HttpError(409, "К этой игре уже нельзя присоединиться");
+    } else {
+      throw joined.error;
+    }
+  }
+  const accepted = await service
+    .from("game_invitations")
+    .update({ status: "accepted", responded_at: new Date().toISOString() })
+    .eq("id", invitation.data.id);
+  if (accepted.error) throw accepted.error;
+  const playerName = profileDisplayName(current!.profile);
+  const gameTitle = (invitation.data.game as any)?.title ?? "игру";
+  await notifyGameProfiles(
+    [Number(invitation.data.inviter_id)],
+    `🙌 ${playerName} принял приглашение на «${gameTitle}».`,
+    "Приглашение принято",
+    `${playerName} присоединился к игре`,
+    `/games/${gameId}`,
+    `game-${gameId}-invite-accepted-${current!.profile.id}`,
+  );
   return oneGame(request, gameId);
 }
 
@@ -2046,6 +2869,42 @@ async function dispatch(
       return gameMembership(request, gameId, "leave");
     if (action === "cancel" && request.method === "POST")
       return cancelGame(request, gameId);
+    if (action === "invite" && request.method === "POST")
+      return inviteToGame(request, gameId);
+    if (action === "invite-response" && request.method === "POST")
+      return respondToGameInvitation(request, gameId);
+  }
+  if (resource === "social") {
+    if (lookup === "overview" && request.method === "GET")
+      return socialOverview(request);
+    if (lookup === "search" && request.method === "GET")
+      return searchSocialProfiles(request);
+  }
+  if (resource === "friends") {
+    if (lookup === "requests" && request.method === "POST")
+      return requestFriendship(request);
+    const friendshipId = positiveInt(lookup, "friendship_id");
+    if (!action && request.method === "DELETE")
+      return removeFriendship(request, friendshipId);
+    if (action === "accept" && request.method === "POST")
+      return respondToFriendship(request, friendshipId, "accept");
+    if (action === "decline" && request.method === "POST")
+      return respondToFriendship(request, friendshipId, "decline");
+  }
+  if (resource === "teams") {
+    if (!lookup && request.method === "POST") return createTeam(request);
+    const teamId = positiveInt(lookup, "team_id");
+    if (!action && request.method === "GET") return oneTeam(request, teamId);
+    if (action === "invite" && request.method === "POST")
+      return inviteToTeam(request, teamId);
+    if (action === "accept" && request.method === "POST")
+      return respondToTeamInvitation(request, teamId, "accept");
+    if (action === "decline" && request.method === "POST")
+      return respondToTeamInvitation(request, teamId, "decline");
+    if (action === "leave" && request.method === "POST")
+      return leaveTeam(request, teamId);
+    if (action === "members" && request.method === "DELETE")
+      return removeTeamMember(request, teamId);
   }
   if (resource === "notifications") {
     if (lookup === "settings" && request.method === "GET") {

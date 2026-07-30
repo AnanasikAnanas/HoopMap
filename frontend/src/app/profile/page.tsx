@@ -10,6 +10,7 @@ import {
   MapPinned,
   Send,
   Trophy,
+  UsersRound,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -137,11 +138,12 @@ export default function ProfilePage() {
             </Button>
           )}
         </div>
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {[
             [Heart, "Избранное", "Сохранённые площадки", "/profile/favorites"],
             [MapPin, "Мои площадки", "Добавленные вами", "/profile/courts"],
             [Trophy, "Мои игры", "Созданные и выбранные", "/profile/games"],
+            [UsersRound, "Сообщество", "Друзья и команды", "/community"],
           ].map(([Icon, title, text, href]) => (
             <Link key={String(title)} href={String(href)}>
               <Card className="h-full p-6">

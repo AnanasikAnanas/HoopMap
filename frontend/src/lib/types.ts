@@ -90,3 +90,64 @@ export type PushSubscriptionInput = {
     auth: string;
   };
 };
+
+export type FriendConnection = {
+  id: number;
+  status: "pending" | "accepted";
+  direction: "incoming" | "outgoing";
+  user: PublicUser;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TeamMember = {
+  user: PublicUser;
+  role: "owner" | "admin" | "member";
+  status: "invited" | "active";
+  joined_at: string | null;
+};
+
+export type Team = {
+  id: number;
+  name: string;
+  description: string;
+  owner: PublicUser;
+  my_role: "owner" | "admin" | "member";
+  my_status: "invited" | "active";
+  members_count: number;
+  members: TeamMember[];
+  created_at: string;
+};
+
+export type GameInvitation = {
+  id: number;
+  status: "pending" | "accepted" | "declined";
+  created_at: string;
+  game: {
+    id: number;
+    title: string;
+    starts_at: string;
+    court_name: string;
+  };
+  inviter: PublicUser;
+  team: { id: number; name: string } | null;
+};
+
+export type RecentPlayer = PublicUser & {
+  last_played_at: string;
+  games_together: number;
+  friendship_status: "none" | "incoming" | "outgoing" | "accepted";
+};
+
+export type SocialOverview = {
+  friends: FriendConnection[];
+  incoming_requests: FriendConnection[];
+  outgoing_requests: FriendConnection[];
+  teams: Team[];
+  game_invitations: GameInvitation[];
+  recent_players: RecentPlayer[];
+};
+
+export type SocialSearchResult = PublicUser & {
+  friendship_status: "none" | "incoming" | "outgoing" | "accepted";
+};

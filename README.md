@@ -36,6 +36,8 @@ flowchart LR
 - избранное, подтверждения актуальности и открытые игры;
 - атомарное присоединение к игре с контролем количества мест;
 - список участников, редактирование и отмена игры организатором;
+- друзья, заявки, недавние партнёры по играм и постоянные команды;
+- приглашения отдельных друзей или всего состава команды в игру;
 - Telegram-уведомления о новых участниках, переносе и отмене игры;
 - устанавливаемое PWA с Web Push и напоминаниями об играх;
 - Telegram webhook с картой, играми и поиском по геолокации;
@@ -127,6 +129,22 @@ PATCH  /games/{id}/
 POST   /games/{id}/join/
 POST   /games/{id}/leave/
 POST   /games/{id}/cancel/
+POST   /games/{id}/invite/
+POST   /games/{id}/invite-response/
+
+GET    /social/overview/
+GET    /social/search/
+POST   /friends/requests/
+POST   /friends/{id}/accept/
+POST   /friends/{id}/decline/
+DELETE /friends/{id}/
+POST   /teams/
+GET    /teams/{id}/
+POST   /teams/{id}/invite/
+POST   /teams/{id}/accept/
+POST   /teams/{id}/decline/
+POST   /teams/{id}/leave/
+DELETE /teams/{id}/members/
 
 GET    /notifications/settings/
 PATCH  /notifications/settings/

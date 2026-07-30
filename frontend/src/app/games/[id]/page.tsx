@@ -10,15 +10,18 @@ import {
   Pencil,
   Share2,
   UserRound,
+  UserRoundPlus,
   Users,
+  UsersRound,
   XCircle,
 } from "lucide-react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { BasketballLoader } from "@/components/basketball-feedback";
 import { Header, MobileNav } from "@/components/header";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, Input } from "@/components/ui";
-import { ApiError, gamesApi } from "@/lib/api";
+import { ApiError, gamesApi, socialApi } from "@/lib/api";
 import { hapticNotification } from "@/lib/haptics";
 import type { GameParticipant } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
@@ -310,9 +313,7 @@ export default function GamePage() {
               {!game.is_owner && (
                 <Button
                   className={`mt-5 w-full ${
-                    game.is_joined
-                      ? "bg-surface text-ink ring-1 ring-line"
-                      : ""
+                    game.is_joined ? "bg-surface text-ink ring-1 ring-line" : ""
                   }`}
                   onClick={() => membership.mutate()}
                   disabled={
@@ -359,6 +360,15 @@ export default function GamePage() {
               </Card>
             )}
 
+            {game.is_owner && game.status === "scheduled" && (
+              <GameInvitePanel
+                gameId={game.id}
+                participantIds={game.participants.map(
+                  (participant) => participant.id,
+                )}
+              />
+            )}
+
             <a
               className="block rounded-2xl bg-canvas p-4 text-center text-sm font-bold text-orange transition hover:bg-orange/10"
               href={`/courts/${game.court_details.slug}`}
@@ -370,6 +380,109 @@ export default function GamePage() {
       </main>
       <MobileNav />
     </>
+  );
+}
+
+function GameInvitePanel({
+  gameId,
+  participantIds,
+}: {
+  gameId: number;
+  participantIds: number[];
+}) {
+  const { showToast } = useToast();
+  const [selection, setSelection] = useState("");
+  const overview = useQuery({
+    queryKey: ["social-overview"],
+    queryFn: socialApi.overview,
+  });
+  const invite = useMutation({
+    mutationFn: () => {
+      const [kind, rawId] = selection.split(":");
+      const id = Number(rawId);
+      if (kind === "team") return gamesApi.invite(gameId, { team_id: id });
+      return gamesApi.invite(gameId, { user_ids: [id] });
+    },
+    onSuccess: ({ invited }) => {
+      setSelection("");
+      showToast(
+        invited === 1
+          ? "Приглашение отправлено"
+          : `Отправлено приглашений: ${invited}`,
+        { tone: "success" },
+      );
+    },
+    onError: (error) => showToast(errorMessage(error), { tone: "error" }),
+  });
+  const joined = new Set(participantIds);
+  const friends = (overview.data?.friends ?? []).filter(
+    (friend) => !joined.has(friend.user.id),
+  );
+  const teams = (overview.data?.teams ?? []).filter(
+    (team) => team.my_status === "active",
+  );
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-start gap-3">
+        <UserRoundPlus className="mt-0.5 shrink-0 text-orange" />
+        <div>
+          <p className="font-bold">Пригласить игроков</p>
+          <p className="mt-1 text-xs leading-5 text-muted">
+            Выберите друга или отправьте приглашение всему составу команды.
+          </p>
+        </div>
+      </div>
+      {overview.isLoading ? (
+        <p className="mt-4 text-xs text-muted">Загружаем контакты…</p>
+      ) : friends.length || teams.length ? (
+        <div className="mt-4 grid gap-2">
+          <select
+            value={selection}
+            onChange={(event) => setSelection(event.target.value)}
+            className="h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm text-ink"
+          >
+            <option value="">Кого пригласить</option>
+            {friends.map((friend) => (
+              <option
+                key={`friend-${friend.user.id}`}
+                value={`friend:${friend.user.id}`}
+              >
+                {participantName({
+                  ...friend.user,
+                  joined_at: "",
+                })}
+              </option>
+            ))}
+            {teams.map((team) => (
+              <option key={`team-${team.id}`} value={`team:${team.id}`}>
+                Команда «{team.name}» · {team.members_count}
+              </option>
+            ))}
+          </select>
+          <Button
+            type="button"
+            className="w-full gap-2"
+            disabled={!selection || invite.isPending}
+            onClick={() => invite.mutate()}
+          >
+            {selection.startsWith("team:") ? (
+              <UsersRound size={17} />
+            ) : (
+              <UserRoundPlus size={17} />
+            )}
+            {invite.isPending ? "Отправляем…" : "Отправить приглашение"}
+          </Button>
+        </div>
+      ) : (
+        <Link
+          href="/community"
+          className="mt-4 block rounded-xl bg-canvas p-3 text-center text-xs font-bold text-orange"
+        >
+          Сначала добавьте друзей или создайте команду
+        </Link>
+      )}
+    </Card>
   );
 }
 

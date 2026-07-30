@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CircleUserRound, Map, Trophy } from "lucide-react";
+import { CircleUserRound, Map, Trophy, UsersRound } from "lucide-react";
 import { ThemeToggle } from "./theme-toggle";
 
 export function Header() {
@@ -15,6 +15,7 @@ export function Header() {
         <nav className="hidden items-center gap-7 text-sm font-bold md:flex">
           <Link href="/map">Карта</Link>
           <Link href="/games">Игры</Link>
+          <Link href="/community">Сообщество</Link>
           <Link href="/courts/add">Добавить площадку</Link>
         </nav>
         <div className="flex items-center gap-2">
@@ -34,7 +35,7 @@ export function Header() {
 
 export function MobileNav() {
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-3 border-t border-line bg-surface px-5 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 text-ink md:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-4 border-t border-line bg-surface px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 text-ink md:hidden">
       <Link className="flex flex-col items-center text-xs" href="/map">
         <Map size={20} />
         Карта
@@ -42,6 +43,10 @@ export function MobileNav() {
       <Link className="flex flex-col items-center text-xs" href="/games">
         <Trophy size={20} />
         Игры
+      </Link>
+      <Link className="flex flex-col items-center text-xs" href="/community">
+        <UsersRound size={20} />
+        Друзья
       </Link>
       <Link className="flex flex-col items-center text-xs" href="/profile">
         <CircleUserRound size={20} />
