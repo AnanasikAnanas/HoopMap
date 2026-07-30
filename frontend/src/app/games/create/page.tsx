@@ -19,6 +19,10 @@ const schema = z
     skill_level: z.string(),
     max_players: z.coerce.number().min(2).max(100),
   })
+  .refine((v) => new Date(v.starts_at) > new Date(), {
+    message: "Начало должно быть в будущем",
+    path: ["starts_at"],
+  })
   .refine((v) => new Date(v.ends_at) > new Date(v.starts_at), {
     message: "Окончание должно быть позже начала",
     path: ["ends_at"],
@@ -73,7 +77,7 @@ export default function CreateGamePage() {
               <Input {...register("title")} placeholder="Вечерний 3×3" />
             </Field>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Начало">
+              <Field label="Начало" error={errors.starts_at?.message}>
                 <Input type="datetime-local" {...register("starts_at")} />
               </Field>
               <Field label="Окончание" error={errors.ends_at?.message}>
@@ -105,7 +109,7 @@ export default function CreateGamePage() {
             </Field>
             {mutation.isError && (
               <p className="rounded-xl bg-danger/10 p-3 text-sm text-danger">
-                Не удалось создать игру. Войдите через Telegram Mini App.
+                Не удалось создать игру. Проверьте данные и авторизацию.
               </p>
             )}
             <Button className="w-full" disabled={mutation.isPending}>

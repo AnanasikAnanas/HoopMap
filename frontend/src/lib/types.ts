@@ -47,6 +47,9 @@ export type Court = {
   is_favorite: boolean;
   created_by: PublicUser | null;
 };
+export type GameParticipant = PublicUser & {
+  joined_at: string;
+};
 export type Game = {
   id: number;
   court_details: Court;
@@ -60,6 +63,9 @@ export type Game = {
   status: string;
   players_count: number;
   is_joined: boolean;
+  is_owner: boolean;
+  can_join: boolean;
+  participants: GameParticipant[];
 };
 export type Page<T> = {
   count: number;

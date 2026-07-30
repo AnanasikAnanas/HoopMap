@@ -41,11 +41,13 @@ import {
 } from "@/lib/supabase/telegram-oidc";
 import {
   courtSelect,
+  effectiveGameStatus,
   privateUser,
   publicUser,
   serializeCourt,
   serializeGame,
 } from "@/lib/supabase/serializers";
+import { notifyProfilesInTelegram } from "@/lib/telegram-notifications";
 import { approximateMapLocation } from "@/lib/location-privacy";
 import {
   googleCallbackUrl,
@@ -813,14 +815,21 @@ async function moderateCourt(request: NextRequest, courtId: number) {
   return json(serializeCourt(await oneCourt(current!.client, String(courtId))));
 }
 
-async function gameRecords(client: DatabaseClient) {
-  const result = await client.from("games").select(`
+async function gameRecords(client: DatabaseClient, gameId?: number) {
+  let query = client.from("games").select(`
     *,
     creator:profiles!games_creator_id_fkey(
       id,username,first_name,last_name,avatar_url,role,reputation
     ),
-    participants:game_participants(status,user_id)
+    participants:game_participants(
+      status,user_id,joined_at,
+      profile:profiles!game_participants_user_id_fkey(
+        id,username,first_name,last_name,avatar_url,role,reputation
+      )
+    )
   `);
+  if (gameId != null) query = query.eq("id", gameId);
+  const result = await query;
   if (result.error) throw result.error;
   return result.data ?? [];
 }
@@ -843,6 +852,9 @@ async function serializeGames(
       ...serializeGame(
         {
           ...record,
+          mine_owner: current
+            ? Number(record.creator_id) === current.profile.id
+            : false,
           participants: (record.participants ?? []).map((participant: any) => ({
             ...participant,
             mine: current
@@ -881,7 +893,10 @@ async function listGames(request: NextRequest) {
     const value = params.get(param);
     if (value)
       records = records.filter(
-        (record: any) => String(record[field]) === value,
+        (record: any) =>
+          String(
+            field === "status" ? effectiveGameStatus(record) : record[field],
+          ) === value,
       );
   }
   const date = params.get("date");
@@ -935,9 +950,7 @@ async function listGames(request: NextRequest) {
 
 async function oneGame(request: NextRequest, gameId: number) {
   const { current, client } = await clientFor(request);
-  const records = (await gameRecords(client)).filter(
-    (record: any) => Number(record.id) === gameId,
-  );
+  const records = await gameRecords(client, gameId);
   if (!records.length) throw new HttpError(404, "Игра не найдена");
   return json((await serializeGames(client, records, current))[0]);
 }
@@ -951,6 +964,61 @@ const gameInput = z.object({
   skill_level: z.enum(["any", "beginner", "intermediate", "advanced"]),
   max_players: z.number().int().min(2).max(100),
 });
+const gameUpdateInput = gameInput.omit({ court: true });
+
+function gameParticipantIds(record: any, excludedProfileId?: number): number[] {
+  return (record.participants ?? [])
+    .filter((participant: any) => participant.status === "joined")
+    .map((participant: any) => Number(participant.user_id))
+    .filter(
+      (profileId: number) =>
+        Number.isSafeInteger(profileId) && profileId !== excludedProfileId,
+    );
+}
+
+function gameNotificationDate(value: string): string {
+  return new Intl.DateTimeFormat("ru-RU", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Europe/Samara",
+  }).format(new Date(value));
+}
+
+function profileDisplayName(profile: RequestIdentity["profile"]): string {
+  return (
+    `${profile.first_name} ${profile.last_name}`.trim() ||
+    profile.username ||
+    "Игрок"
+  );
+}
+
+function throwGameMutationError(error: { message: string }): never {
+  if (error.message.includes("not found")) {
+    throw new HttpError(404, "Игра не найдена");
+  }
+  if (error.message.includes("forbidden")) {
+    throw new HttpError(403, "Управлять игрой может только организатор");
+  }
+  if (error.message.includes("Player limit")) {
+    throw new HttpError(
+      409,
+      "Лимит игроков не может быть меньше числа участников",
+    );
+  }
+  if (
+    error.message.includes("cannot be edited") ||
+    error.message.includes("finished")
+  ) {
+    throw new HttpError(409, "Эту игру уже нельзя изменить");
+  }
+  if (
+    error.message.includes("Invalid") ||
+    error.message.includes("Description is too long")
+  ) {
+    throw new HttpError(400, "Проверьте параметры игры");
+  }
+  throw error;
+}
 
 async function createGame(request: NextRequest) {
   const current = await identity(request, true);
@@ -958,7 +1026,8 @@ async function createGame(request: NextRequest) {
   const parsed = gameInput.safeParse(await body(request));
   if (
     !parsed.success ||
-    Date.parse(parsed.data.ends_at) <= Date.parse(parsed.data.starts_at)
+    Date.parse(parsed.data.ends_at) <= Date.parse(parsed.data.starts_at) ||
+    Date.parse(parsed.data.starts_at) <= Date.now()
   ) {
     throw new HttpError(
       400,
@@ -980,6 +1049,62 @@ async function createGame(request: NextRequest) {
   return await oneGame(request, Number(created.data));
 }
 
+async function updateGame(request: NextRequest, gameId: number) {
+  const current = await identity(request, true);
+  await rateLimit(request, "game-update", 20, 3600, current!.profile.id);
+  const parsed = gameUpdateInput.safeParse(await body(request));
+  if (
+    !parsed.success ||
+    Date.parse(parsed.data.ends_at) <= Date.parse(parsed.data.starts_at) ||
+    Date.parse(parsed.data.starts_at) <= Date.now()
+  ) {
+    throw new HttpError(
+      400,
+      "Проверьте параметры игры",
+      parsed.success ? undefined : parsed.error.flatten(),
+    );
+  }
+  const before = (await gameRecords(current!.client, gameId))[0];
+  if (!before) throw new HttpError(404, "Игра не найдена");
+
+  const value = parsed.data;
+  const updated = await current!.client.rpc("update_game", {
+    target_game_id: gameId,
+    game_title: value.title,
+    game_description: value.description,
+    game_starts_at: new Date(value.starts_at).toISOString(),
+    game_ends_at: new Date(value.ends_at).toISOString(),
+    game_skill_level: value.skill_level,
+    game_max_players: value.max_players,
+  });
+  if (updated.error) throwGameMutationError(updated.error);
+
+  await notifyProfilesInTelegram(
+    gameParticipantIds(before, current!.profile.id),
+    `🏀 Игра «${value.title}» обновлена.\nНовое время: ${gameNotificationDate(value.starts_at)}.`,
+    `/games/${gameId}`,
+  );
+  return oneGame(request, gameId);
+}
+
+async function cancelGame(request: NextRequest, gameId: number) {
+  const current = await identity(request, true);
+  await rateLimit(request, "game-cancel", 10, 3600, current!.profile.id);
+  const before = (await gameRecords(current!.client, gameId))[0];
+  if (!before) throw new HttpError(404, "Игра не найдена");
+  const cancelled = await current!.client.rpc("cancel_game", {
+    target_game_id: gameId,
+  });
+  if (cancelled.error) throwGameMutationError(cancelled.error);
+
+  await notifyProfilesInTelegram(
+    gameParticipantIds(before, current!.profile.id),
+    `❌ Игра «${before.title}» отменена организатором.`,
+    `/games/${gameId}`,
+  );
+  return oneGame(request, gameId);
+}
+
 async function gameMembership(
   request: NextRequest,
   gameId: number,
@@ -987,6 +1112,8 @@ async function gameMembership(
 ) {
   const current = await identity(request, true);
   await rateLimit(request, "game-membership", 60, 3600, current!.profile.id);
+  const game = (await gameRecords(current!.client, gameId))[0];
+  if (!game) throw new HttpError(404, "Игра не найдена");
   const result = await current!.client.rpc(
     action === "join" ? "join_game" : "leave_game",
     {
@@ -1004,9 +1131,21 @@ async function gameMembership(
     if (message.includes("Game cannot be joined")) {
       throw new HttpError(409, "К этой игре уже нельзя присоединиться");
     }
+    if (message.includes("Creator must cancel")) {
+      throw new HttpError(409, "Организатор может только отменить игру");
+    }
     throw result.error;
   }
-  return action === "join" ? oneGame(request, gameId) : empty();
+  if (Number(game.creator_id) !== current!.profile.id) {
+    await notifyProfilesInTelegram(
+      [Number(game.creator_id)],
+      action === "join"
+        ? `🙌 ${profileDisplayName(current!.profile)} присоединился к игре «${game.title}».`
+        : `${profileDisplayName(current!.profile)} вышел из игры «${game.title}».`,
+      `/games/${gameId}`,
+    );
+  }
+  return oneGame(request, gameId);
 }
 
 async function authTelegram(request: NextRequest) {
@@ -1686,10 +1825,14 @@ async function dispatch(
     if (!lookup && request.method === "POST") return createGame(request);
     const gameId = positiveInt(lookup);
     if (!action && request.method === "GET") return oneGame(request, gameId);
+    if (!action && request.method === "PATCH")
+      return updateGame(request, gameId);
     if (action === "join" && request.method === "POST")
       return gameMembership(request, gameId, "join");
     if (action === "leave" && request.method === "POST")
       return gameMembership(request, gameId, "leave");
+    if (action === "cancel" && request.method === "POST")
+      return cancelGame(request, gameId);
   }
   throw new HttpError(404, "Маршрут не найден");
 }

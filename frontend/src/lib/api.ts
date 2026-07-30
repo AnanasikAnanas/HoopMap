@@ -125,8 +125,19 @@ export const gamesApi = {
   one: (id: string) => api<Game>(`/games/${id}/`),
   create: (body: Record<string, unknown>) =>
     api<Game>("/games/", { method: "POST", body: JSON.stringify(body) }),
+  update: (id: number, body: Record<string, unknown>) =>
+    api<Game>(`/games/${id}/`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  cancel: (id: number) =>
+    api<Game>(`/games/${id}/cancel/`, {
+      method: "POST",
+      body: "{}",
+    }),
   join: (id: number) => api<Game>(`/games/${id}/join/`, { method: "POST" }),
-  leave: (id: number) => api(`/games/${id}/leave/`, { method: "POST" }),
+  leave: (id: number) =>
+    api<Game>(`/games/${id}/leave/`, { method: "POST" }),
 };
 
 export const authApi = {

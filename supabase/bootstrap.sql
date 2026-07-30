@@ -144,6 +144,10 @@ create table if not exists public.games (
   check (ends_at > starts_at)
 );
 create index if not exists games_status_starts_idx on public.games(status, starts_at);
+create index if not exists games_court_starts_idx
+  on public.games(court_id, starts_at);
+create index if not exists games_creator_starts_idx
+  on public.games(creator_id, starts_at desc);
 
 create table if not exists public.game_participants (
   game_id bigint not null references public.games(id) on delete cascade,
@@ -152,6 +156,8 @@ create table if not exists public.game_participants (
   joined_at timestamptz not null default now(),
   primary key (game_id, user_id)
 );
+create index if not exists game_participants_user_status_idx
+  on public.game_participants(user_id, status);
 
 create table if not exists public.api_rate_limits (
   scope_key text not null,
@@ -475,6 +481,92 @@ begin
 end;
 $$;
 
+create or replace function public.update_game(
+  target_game_id bigint,
+  game_title text,
+  game_description text,
+  game_starts_at timestamptz,
+  game_ends_at timestamptz,
+  game_skill_level text,
+  game_max_players integer
+)
+returns bigint language plpgsql security definer set search_path = ''
+as $$
+declare
+  profile_id bigint := public.current_profile_id();
+  selected_game public.games;
+  joined_count integer;
+begin
+  if profile_id is null then raise exception 'Authentication required'; end if;
+  select * into selected_game
+  from public.games
+  where id = target_game_id
+  for update;
+  if selected_game.id is null then raise exception 'Game not found'; end if;
+  if selected_game.creator_id <> profile_id and not public.is_moderator() then
+    raise exception 'Game management forbidden';
+  end if;
+  if selected_game.status <> 'scheduled' or selected_game.starts_at <= now() then
+    raise exception 'Game cannot be edited';
+  end if;
+  if char_length(game_title) not between 3 and 180 then
+    raise exception 'Invalid title';
+  end if;
+  if char_length(coalesce(game_description, '')) > 3000 then
+    raise exception 'Description is too long';
+  end if;
+  if game_starts_at <= now() or game_ends_at <= game_starts_at then
+    raise exception 'Invalid game schedule';
+  end if;
+  if game_skill_level not in ('any', 'beginner', 'intermediate', 'advanced') then
+    raise exception 'Invalid skill level';
+  end if;
+  if game_max_players not between 2 and 100 then
+    raise exception 'Invalid player limit';
+  end if;
+  select count(*) into joined_count
+  from public.game_participants
+  where game_id = target_game_id and status = 'joined';
+  if game_max_players < joined_count then
+    raise exception 'Player limit is below participant count';
+  end if;
+
+  update public.games
+  set
+    title = game_title,
+    description = coalesce(game_description, ''),
+    starts_at = game_starts_at,
+    ends_at = game_ends_at,
+    skill_level = game_skill_level,
+    max_players = game_max_players
+  where id = target_game_id;
+  return target_game_id;
+end;
+$$;
+
+create or replace function public.cancel_game(target_game_id bigint)
+returns bigint language plpgsql security definer set search_path = ''
+as $$
+declare
+  profile_id bigint := public.current_profile_id();
+  selected_game public.games;
+begin
+  if profile_id is null then raise exception 'Authentication required'; end if;
+  select * into selected_game
+  from public.games
+  where id = target_game_id
+  for update;
+  if selected_game.id is null then raise exception 'Game not found'; end if;
+  if selected_game.creator_id <> profile_id and not public.is_moderator() then
+    raise exception 'Game management forbidden';
+  end if;
+  if selected_game.status = 'cancelled' then return target_game_id; end if;
+  if selected_game.ends_at <= now() then raise exception 'Game has finished'; end if;
+  update public.games set status = 'cancelled' where id = target_game_id;
+  return target_game_id;
+end;
+$$;
+
 create or replace function public.consume_telegram_link(
   target_token_hash text,
   target_telegram_id bigint,
@@ -628,15 +720,28 @@ begin
 end;
 $$;
 
-revoke all on function public.verify_court(bigint, boolean, text) from public;
-revoke all on function public.create_game(bigint, text, text, timestamptz, timestamptz, text, integer) from public;
-revoke all on function public.join_game(bigint) from public;
-revoke all on function public.leave_game(bigint) from public;
-revoke all on function public.consume_telegram_link(text, bigint, text, text, text) from public;
+revoke all on function public.consume_rate_limit(text, integer, integer)
+  from public, anon, authenticated;
+revoke all on function public.verify_court(bigint, boolean, text)
+  from public, anon;
+revoke all on function public.create_game(bigint, text, text, timestamptz, timestamptz, text, integer)
+  from public, anon;
+revoke all on function public.join_game(bigint) from public, anon;
+revoke all on function public.leave_game(bigint) from public, anon;
+revoke all on function public.update_game(bigint, text, text, timestamptz, timestamptz, text, integer)
+  from public, anon;
+revoke all on function public.cancel_game(bigint) from public, anon;
+revoke all on function public.consume_telegram_link(text, bigint, text, text, text)
+  from public, anon, authenticated;
+grant execute on function public.consume_rate_limit(text, integer, integer)
+  to service_role;
 grant execute on function public.verify_court(bigint, boolean, text) to authenticated;
 grant execute on function public.create_game(bigint, text, text, timestamptz, timestamptz, text, integer) to authenticated;
 grant execute on function public.join_game(bigint) to authenticated;
 grant execute on function public.leave_game(bigint) to authenticated;
+grant execute on function public.update_game(bigint, text, text, timestamptz, timestamptz, text, integer)
+  to authenticated;
+grant execute on function public.cancel_game(bigint) to authenticated;
 grant execute on function public.consume_telegram_link(text, bigint, text, text, text)
   to service_role;
 grant execute on function public.nearby_courts(double precision, double precision, integer) to anon, authenticated;
@@ -652,7 +757,7 @@ on conflict (id) do update set
   allowed_mime_types = excluded.allowed_mime_types;
 
 drop policy if exists "court photos are publicly readable" on storage.objects;
-create policy "court photos are publicly readable" on storage.objects for select
-using (bucket_id = 'hoopmap-media');
+-- Public object URLs work without a broad SELECT policy. Keeping the policy
+-- absent prevents anonymous clients from listing every uploaded object.
 
 commit;

@@ -32,7 +32,11 @@ export function MapGameCard({
   checkingAuth?: boolean;
 }) {
   const freeSpots = Math.max(game.max_players - game.players_count, 0);
-  const canJoin = freeSpots > 0 && !game.is_joined;
+  const canJoin =
+    game.can_join &&
+    game.status === "scheduled" &&
+    freeSpots > 0 &&
+    !game.is_joined;
 
   return (
     <Card className="border-0 p-4 shadow-none">
@@ -82,7 +86,13 @@ export function MapGameCard({
         ) : game.is_joined ? (
           <Check size={17} />
         ) : null}
-        {checkingAuth
+        {game.status === "cancelled"
+          ? "Игра отменена"
+          : game.status === "in_progress"
+            ? "Игра уже идёт"
+            : game.status === "finished"
+              ? "Игра завершена"
+              : checkingAuth
           ? "Проверяем вход…"
           : joining
             ? "Присоединяем…"

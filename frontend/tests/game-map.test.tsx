@@ -62,6 +62,9 @@ function game(
     status: "scheduled",
     players_count: 6,
     is_joined: false,
+    is_owner: false,
+    can_join: true,
+    participants: [],
     ...overrides,
   };
 }
@@ -120,6 +123,36 @@ describe("map games", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "Мест нет" })).toBeDisabled();
+    expect(onJoin).not.toHaveBeenCalled();
+  });
+
+  it("prevents joining a cancelled or already started game", () => {
+    const onJoin = vi.fn();
+    const { rerender } = render(
+      <MapGameCard
+        game={game(1, "2030-08-10T16:00:00.000Z", {
+          status: "cancelled",
+          can_join: false,
+        })}
+        onJoin={onJoin}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Игра отменена" }),
+    ).toBeDisabled();
+
+    rerender(
+      <MapGameCard
+        game={game(1, "2030-08-10T16:00:00.000Z", {
+          status: "in_progress",
+          can_join: false,
+        })}
+        onJoin={onJoin}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Игра уже идёт" }),
+    ).toBeDisabled();
     expect(onJoin).not.toHaveBeenCalled();
   });
 

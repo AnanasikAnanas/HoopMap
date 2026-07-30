@@ -8,6 +8,13 @@ import { Card } from "@/components/ui";
 import { gamesApi } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 
+const statusLabels: Record<string, string> = {
+  scheduled: "Запланирована",
+  in_progress: "Идёт сейчас",
+  finished: "Завершена",
+  cancelled: "Отменена",
+};
+
 export default function GamesPage() {
   const { data, isLoading } = useQuery({
     queryKey: ["games"],
@@ -43,7 +50,9 @@ export default function GamesPage() {
                     <span className="rounded-full bg-orange/10 px-3 py-1 text-xs font-bold text-orange">
                       {game.skill_level}
                     </span>
-                    <span className="text-sm text-muted">{game.status}</span>
+                    <span className="text-sm text-muted">
+                      {statusLabels[game.status] ?? game.status}
+                    </span>
                   </div>
                   <h2 className="mt-5 text-xl font-bold">{game.title}</h2>
                   <p className="mt-2 text-sm text-muted">

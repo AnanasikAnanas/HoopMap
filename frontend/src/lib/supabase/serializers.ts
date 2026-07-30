@@ -101,6 +101,8 @@ export function serializeCourt(record: any, distance?: number | null): Court {
 
 export function serializeGame(record: any, court: Court): Game {
   const joined = (record.participants ?? []).filter((item: any) => item.status === "joined");
+  const status = effectiveGameStatus(record);
+  const isJoined = joined.some((item: any) => item.mine === true);
   return {
     id: Number(record.id),
     court_details: court,
@@ -111,10 +113,33 @@ export function serializeGame(record: any, court: Court): Game {
     ends_at: record.ends_at,
     skill_level: record.skill_level,
     max_players: Number(record.max_players),
-    status: record.status,
+    status,
     players_count: joined.length,
-    is_joined: joined.some((item: any) => item.mine === true),
+    is_joined: isJoined,
+    is_owner: record.mine_owner === true,
+    can_join:
+      status === "scheduled" &&
+      !isJoined &&
+      joined.length < Number(record.max_players),
+    participants: joined
+      .map((item: any) => ({
+        ...publicUser(item.profile),
+        joined_at: item.joined_at,
+      }))
+      .filter((item: any) => Number.isFinite(item.id)),
   };
+}
+
+export function effectiveGameStatus(record: {
+  status: string;
+  starts_at: string;
+  ends_at: string;
+}): string {
+  if (record.status === "cancelled") return "cancelled";
+  const now = Date.now();
+  if (Date.parse(record.ends_at) <= now) return "finished";
+  if (Date.parse(record.starts_at) <= now) return "in_progress";
+  return record.status;
 }
 
 export const courtSelect = `
