@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowRight, ShieldCheck } from "lucide-react";
 import { EmailAuthForm } from "@/components/email-auth-form";
 import { Header, MobileNav } from "@/components/header";
+import { TelegramLoginWidget } from "@/components/telegram-login-widget";
 import { Card } from "@/components/ui";
 
 function safeNext(value: string | string[] | undefined): string {
@@ -18,9 +19,13 @@ export default async function LoginPage({
 }) {
   const params = await searchParams;
   const next = safeNext(params.next);
-  const configured = Boolean(
+  const oidcConfigured = Boolean(
     process.env.TELEGRAM_LOGIN_CLIENT_ID?.trim() &&
-      process.env.TELEGRAM_LOGIN_CLIENT_SECRET?.trim(),
+    process.env.TELEGRAM_LOGIN_CLIENT_SECRET?.trim(),
+  );
+  const widgetConfigured = Boolean(
+    process.env.TELEGRAM_BOT_TOKEN?.trim() &&
+    process.env.TELEGRAM_BOT_USERNAME?.trim(),
   );
   const loginHref = `/api/v1/auth/telegram/start/?${new URLSearchParams({
     next,
@@ -61,7 +66,7 @@ export default async function LoginPage({
             <span className="h-px flex-1 bg-line" />
           </div>
 
-          {configured ? (
+          {oidcConfigured ? (
             <a
               href={loginHref}
               className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-[#229ED9] px-6 text-sm font-bold text-white transition hover:bg-[#198bc1]"
@@ -75,6 +80,8 @@ export default async function LoginPage({
               </svg>
               Продолжить в Telegram <ArrowRight size={18} />
             </a>
+          ) : widgetConfigured ? (
+            <TelegramLoginWidget next={next} />
           ) : (
             <p className="rounded-2xl bg-canvas p-4 text-sm text-muted">
               Вход через Telegram пока не настроен. Email-регистрация доступна.
@@ -84,8 +91,8 @@ export default async function LoginPage({
           <div className="mt-6 flex items-start gap-3 rounded-2xl bg-canvas p-4 text-left">
             <ShieldCheck className="mt-0.5 shrink-0 text-success" size={20} />
             <p className="text-xs leading-5 text-muted">
-              Пароль обрабатывает Supabase Auth и не сохраняется в базе
-              HOOPMAP. Telegram для email-аккаунта не требуется.
+              Пароль обрабатывает Supabase Auth и не сохраняется в базе HOOPMAP.
+              Telegram для email-аккаунта не требуется.
             </p>
           </div>
           <Link

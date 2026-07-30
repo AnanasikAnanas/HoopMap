@@ -1,6 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from "next/server";
-import { createHash, createHmac } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
 import { z } from "zod";
 import {
   bearerToken,
@@ -16,6 +21,7 @@ import {
   createTelegramSession,
   ensureTelegramUser,
   validateTelegramInitData,
+  validateTelegramLoginWidgetData,
 } from "@/lib/supabase/telegram-auth";
 import {
   emailLoginSchema,
@@ -1181,10 +1187,25 @@ const telegramOidcCookies = {
   next: "hoopmap_tg_oidc_next",
 } as const;
 
+const telegramWidgetCookies = {
+  state: "hoopmap_tg_widget_state",
+  next: "hoopmap_tg_widget_next",
+} as const;
+
 function safeNextPath(value: string | null): string {
   return value?.startsWith("/") && !value.startsWith("//")
     ? value.slice(0, 500)
     : "/profile";
+}
+
+function secureStringEqual(received: string, expected: string): boolean {
+  const left = Buffer.from(received);
+  const right = Buffer.from(expected);
+  return (
+    left.length === right.length &&
+    left.length > 0 &&
+    timingSafeEqual(left, right)
+  );
 }
 
 function telegramOidcCookieOptions() {
@@ -1195,6 +1216,36 @@ function telegramOidcCookieOptions() {
     path: "/api/v1/auth/telegram",
     maxAge: 10 * 60,
   };
+}
+
+function telegramBotUsername(): string {
+  const username = process.env.TELEGRAM_BOT_USERNAME?.trim().replace(/^@/, "");
+  if (
+    !username ||
+    !/^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(username) ||
+    !username.toLowerCase().endsWith("bot")
+  ) {
+    throw new Error("TELEGRAM_BOT_USERNAME is not configured");
+  }
+  return username;
+}
+
+function telegramWebBaseUrl(request: NextRequest): URL {
+  const configured =
+    process.env.SITE_URL?.trim() ||
+    process.env.TELEGRAM_WEBAPP_URL?.trim() ||
+    request.nextUrl.origin;
+  const base = new URL(configured);
+  if (
+    base.protocol !== "https:" &&
+    !(
+      base.protocol === "http:" &&
+      ["localhost", "127.0.0.1"].includes(base.hostname)
+    )
+  ) {
+    throw new Error("Telegram web login requires HTTPS");
+  }
+  return base;
 }
 
 function telegramOidcRedirectUri(request: NextRequest): string {
@@ -1209,6 +1260,95 @@ function clearTelegramOidcCookies(response: NextResponse) {
       ...telegramOidcCookieOptions(),
       maxAge: 0,
     });
+  }
+}
+
+function clearTelegramWidgetCookies(response: NextResponse) {
+  for (const name of Object.values(telegramWidgetCookies)) {
+    response.cookies.set(name, "", {
+      ...telegramOidcCookieOptions(),
+      maxAge: 0,
+    });
+  }
+}
+
+async function telegramWidgetConfiguration(request: NextRequest) {
+  await rateLimit(request, "telegram-widget-config", 30, 900);
+  const state = randomBytes(32).toString("base64url");
+  const next = safeNextPath(request.nextUrl.searchParams.get("next"));
+  const callback = new URL(
+    "/api/v1/auth/telegram/widget-callback/",
+    telegramWebBaseUrl(request),
+  );
+  callback.searchParams.set("state", state);
+
+  const response = json({
+    botUsername: telegramBotUsername(),
+    authUrl: callback.toString(),
+  });
+  const options = telegramOidcCookieOptions();
+  response.cookies.set(telegramWidgetCookies.state, state, options);
+  response.cookies.set(telegramWidgetCookies.next, next, options);
+  return response;
+}
+
+async function finishTelegramWidgetLogin(request: NextRequest) {
+  const loginUrl = new URL("/login", request.nextUrl.origin);
+  try {
+    await rateLimit(request, "telegram-widget-callback", 30, 900);
+    const receivedState = request.nextUrl.searchParams.get("state") ?? "";
+    const expectedState =
+      request.cookies.get(telegramWidgetCookies.state)?.value ?? "";
+    if (!secureStringEqual(receivedState, expectedState)) {
+      throw new Error("Invalid Telegram widget state");
+    }
+
+    const signedFields = new URLSearchParams();
+    for (const key of [
+      "id",
+      "first_name",
+      "last_name",
+      "username",
+      "photo_url",
+      "auth_date",
+      "hash",
+    ]) {
+      const values = request.nextUrl.searchParams.getAll(key);
+      if (values.length > 1) throw new Error("Duplicate Telegram fields");
+      if (values.length === 1) signedFields.set(key, values[0]);
+    }
+    const allowed = new Set([...signedFields.keys(), "state"]);
+    if (
+      Array.from(request.nextUrl.searchParams.keys()).some(
+        (key) => !allowed.has(key),
+      )
+    ) {
+      throw new Error("Unexpected Telegram callback field");
+    }
+
+    const identity = validateTelegramLoginWidgetData(signedFields);
+    const profile = await ensureTelegramUser(identity);
+    const session = await createTelegramSession(profile);
+    const destination = new URL(
+      safeNextPath(
+        request.cookies.get(telegramWidgetCookies.next)?.value ?? "/profile",
+      ),
+      request.nextUrl.origin,
+    );
+    const response = NextResponse.redirect(destination);
+    response.cookies.set(
+      refreshCookieName(),
+      session.refresh_token,
+      refreshCookieOptions(),
+    );
+    clearTelegramWidgetCookies(response);
+    return response;
+  } catch (error) {
+    console.error("Telegram widget login failed", error);
+    loginUrl.searchParams.set("error", "telegram");
+    const response = NextResponse.redirect(loginUrl);
+    clearTelegramWidgetCookies(response);
+    return response;
   }
 }
 
@@ -1296,6 +1436,20 @@ async function dispatch(
   if (resource === "auth") {
     if (lookup === "telegram" && request.method === "POST")
       return authTelegram(request);
+    if (
+      lookup === "telegram" &&
+      action === "widget-config" &&
+      request.method === "GET"
+    ) {
+      return telegramWidgetConfiguration(request);
+    }
+    if (
+      lookup === "telegram" &&
+      action === "widget-callback" &&
+      request.method === "GET"
+    ) {
+      return finishTelegramWidgetLogin(request);
+    }
     if (
       lookup === "telegram" &&
       action === "start" &&

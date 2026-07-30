@@ -1,5 +1,9 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { createRequestClient, createServiceClient, type ProfileRecord } from "./server";
+import {
+  createRequestClient,
+  createServiceClient,
+  type ProfileRecord,
+} from "./server";
 
 export type TelegramIdentity = {
   telegramId: number;
@@ -13,35 +17,58 @@ function safeText(value: unknown, maxLength: number): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
-export function validateTelegramInitData(initData: string): TelegramIdentity {
-  if (!initData || initData.length > 8192) throw new Error("Malformed Telegram initData");
+function telegramBotToken(): string {
   const botToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
   if (!botToken) throw new Error("Telegram bot is not configured");
+  return botToken;
+}
+
+function validateAuthDate(value: string | null) {
+  const authDate = Number(value);
+  const maxAge = Number(process.env.TELEGRAM_AUTH_MAX_AGE_SECONDS || 3600);
+  const now = Math.floor(Date.now() / 1000);
+  if (
+    !Number.isInteger(authDate) ||
+    !Number.isFinite(maxAge) ||
+    maxAge < 60 ||
+    authDate > now + 60 ||
+    now - authDate > maxAge
+  ) {
+    throw new Error("Telegram authentication has expired");
+  }
+}
+
+export function validateTelegramInitData(initData: string): TelegramIdentity {
+  if (!initData || initData.length > 8192)
+    throw new Error("Malformed Telegram initData");
+  const botToken = telegramBotToken();
 
   const params = new URLSearchParams(initData);
   const keys = Array.from(params.keys());
-  if (keys.length !== new Set(keys).size) throw new Error("Duplicate Telegram fields");
+  if (keys.length !== new Set(keys).size)
+    throw new Error("Duplicate Telegram fields");
   const receivedHash = params.get("hash") ?? "";
   params.delete("hash");
-  if (!/^[a-f0-9]{64}$/i.test(receivedHash)) throw new Error("Telegram signature is missing");
+  if (!/^[a-f0-9]{64}$/i.test(receivedHash))
+    throw new Error("Telegram signature is missing");
 
   const dataCheckString = Array.from(params.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, value]) => `${key}=${value}`)
     .join("\n");
   const secret = createHmac("sha256", "WebAppData").update(botToken).digest();
-  const expected = createHmac("sha256", secret).update(dataCheckString).digest();
+  const expected = createHmac("sha256", secret)
+    .update(dataCheckString)
+    .digest();
   const received = Buffer.from(receivedHash, "hex");
-  if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
+  if (
+    received.length !== expected.length ||
+    !timingSafeEqual(received, expected)
+  ) {
     throw new Error("Invalid Telegram signature");
   }
 
-  const authDate = Number(params.get("auth_date"));
-  const maxAge = Number(process.env.TELEGRAM_AUTH_MAX_AGE_SECONDS || 3600);
-  const now = Math.floor(Date.now() / 1000);
-  if (!Number.isInteger(authDate) || authDate > now + 60 || now - authDate > maxAge) {
-    throw new Error("Telegram initData has expired");
-  }
+  validateAuthDate(params.get("auth_date"));
 
   let rawUser: unknown;
   try {
@@ -49,10 +76,15 @@ export function validateTelegramInitData(initData: string): TelegramIdentity {
   } catch {
     throw new Error("Malformed Telegram user");
   }
-  if (!rawUser || typeof rawUser !== "object") throw new Error("Malformed Telegram user");
+  if (!rawUser || typeof rawUser !== "object")
+    throw new Error("Malformed Telegram user");
   const user = rawUser as Record<string, unknown>;
   const telegramId = Number(user.id);
-  if (!Number.isSafeInteger(telegramId) || telegramId <= 0 || user.is_bot === true) {
+  if (
+    !Number.isSafeInteger(telegramId) ||
+    telegramId <= 0 ||
+    user.is_bot === true
+  ) {
     throw new Error("Malformed Telegram user");
   }
   const avatar = safeText(user.photo_url, 500);
@@ -65,11 +97,73 @@ export function validateTelegramInitData(initData: string): TelegramIdentity {
   };
 }
 
+export function validateTelegramLoginWidgetData(
+  params: URLSearchParams,
+): TelegramIdentity {
+  if (!params.size || params.toString().length > 8192) {
+    throw new Error("Malformed Telegram login data");
+  }
+  const keys = Array.from(params.keys());
+  if (keys.length !== new Set(keys).size) {
+    throw new Error("Duplicate Telegram fields");
+  }
+  const allowed = new Set([
+    "id",
+    "first_name",
+    "last_name",
+    "username",
+    "photo_url",
+    "auth_date",
+    "hash",
+  ]);
+  if (keys.some((key) => !allowed.has(key))) {
+    throw new Error("Unexpected Telegram login field");
+  }
+
+  const receivedHash = params.get("hash") ?? "";
+  if (!/^[a-f0-9]{64}$/i.test(receivedHash)) {
+    throw new Error("Telegram signature is missing");
+  }
+  const signed = new URLSearchParams(params);
+  signed.delete("hash");
+  const dataCheckString = Array.from(signed.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+  const secret = createHash("sha256").update(telegramBotToken()).digest();
+  const expected = createHmac("sha256", secret)
+    .update(dataCheckString)
+    .digest();
+  const received = Buffer.from(receivedHash, "hex");
+  if (
+    received.length !== expected.length ||
+    !timingSafeEqual(received, expected)
+  ) {
+    throw new Error("Invalid Telegram signature");
+  }
+  validateAuthDate(params.get("auth_date"));
+
+  const telegramId = Number(params.get("id"));
+  if (!Number.isSafeInteger(telegramId) || telegramId <= 0) {
+    throw new Error("Malformed Telegram user");
+  }
+  const avatar = safeText(params.get("photo_url"), 500);
+  return {
+    telegramId,
+    username: safeText(params.get("username"), 150),
+    firstName: safeText(params.get("first_name"), 150),
+    lastName: safeText(params.get("last_name"), 150),
+    avatarUrl: avatar.startsWith("https://") ? avatar : "",
+  };
+}
+
 function telegramEmail(telegramId: number): string {
   return `tg_${telegramId}@users.hoopmap.invalid`;
 }
 
-export async function ensureTelegramUser(identity: TelegramIdentity): Promise<ProfileRecord> {
+export async function ensureTelegramUser(
+  identity: TelegramIdentity,
+): Promise<ProfileRecord> {
   const admin = createServiceClient();
   const existing = await admin
     .from("profiles")
@@ -120,11 +214,18 @@ export async function ensureTelegramUser(identity: TelegramIdentity): Promise<Pr
 export async function createTelegramSession(profile: ProfileRecord) {
   const admin = createServiceClient();
   const email = telegramEmail(profile.telegram_id!);
-  const link = await admin.auth.admin.generateLink({ type: "magiclink", email });
+  const link = await admin.auth.admin.generateLink({
+    type: "magiclink",
+    email,
+  });
   const tokenHash = link.data.properties?.hashed_token;
-  if (link.error || !tokenHash) throw link.error ?? new Error("Could not create session");
+  if (link.error || !tokenHash)
+    throw link.error ?? new Error("Could not create session");
   const client = createRequestClient();
-  const verified = await client.auth.verifyOtp({ type: "magiclink", token_hash: tokenHash });
+  const verified = await client.auth.verifyOtp({
+    type: "magiclink",
+    token_hash: tokenHash,
+  });
   if (verified.error || !verified.data.session) {
     throw verified.error ?? new Error("Could not verify session");
   }

@@ -34,6 +34,7 @@ export function proxy(request: NextRequest) {
     `img-src 'self' blob: data: ${externalOrigins}${isDevelopment ? " https: http:" : ""}`,
     "font-src 'self' data: https://fonts.gstatic.com",
     `connect-src 'self' ${externalOrigins}${isDevelopment ? " https: http: wss: ws:" : ""}`,
+    "frame-src 'self' https://oauth.telegram.org https://*.telegram.org",
     "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",

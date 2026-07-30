@@ -92,16 +92,23 @@ Email-аккаунты используют Supabase Auth и обычную та
 Один и тот же `telegram_id` используется в Mini App и на сайте, поэтому избранное, добавленные
 площадки, игры и роль пользователя автоматически относятся к одному профилю.
 
-1. В `@BotFather` откройте **My Bots → ваш бот → Bot Settings → Web Login**.
-2. В Allowed URLs добавьте:
-   - `https://YOUR_PROJECT.vercel.app`;
-   - `https://YOUR_PROJECT.vercel.app/api/v1/auth/telegram/callback/`.
-3. Скопируйте показанные BotFather **Client ID** и **Client Secret**.
-4. В Vercel → **Settings → Environment Variables** добавьте:
-   - `TELEGRAM_LOGIN_CLIENT_ID`;
-   - `TELEGRAM_LOGIN_CLIENT_SECRET`.
-5. В расширенных настройках Telegram Login оставьте алгоритм подписи **RS256**.
-6. Выполните Redeploy.
+Основной совместимый вариант использует классический Telegram Login Widget:
+
+1. Отправьте `@BotFather` команду `/setdomain`, выберите бота и укажите production-домен без
+   протокола и пути: `YOUR_PROJECT.vercel.app`.
+2. В Vercel → **Settings → Environment Variables** добавьте
+   `TELEGRAM_BOT_USERNAME=имя_бота_без_@`.
+3. Убедитесь, что уже заданы `TELEGRAM_BOT_TOKEN`, `SITE_URL` и `TELEGRAM_WEBAPP_URL`.
+4. Выполните Redeploy.
+
+Подписанные Telegram параметры проверяются сервером с помощью `TELEGRAM_BOT_TOKEN`; токен никогда
+не передаётся в браузер.
+
+Новый OIDC-вариант также поддерживается, если в BotFather доступен раздел **Web Login**. В этом
+случае зарегистрируйте origin `https://YOUR_PROJECT.vercel.app` и callback
+`https://YOUR_PROJECT.vercel.app/api/v1/auth/telegram/callback/`, затем добавьте в Vercel
+`TELEGRAM_LOGIN_CLIENT_ID` и `TELEGRAM_LOGIN_CLIENT_SECRET`. При наличии этих двух переменных
+HOOPMAP автоматически предпочитает OIDC.
 
 `TELEGRAM_LOGIN_CLIENT_SECRET`, как и токен бота, является серверным секретом. Его нельзя
 добавлять в `NEXT_PUBLIC_*`, GitHub или клиентский код.
