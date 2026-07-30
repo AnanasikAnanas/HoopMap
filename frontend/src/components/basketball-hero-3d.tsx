@@ -29,8 +29,11 @@ export function BasketballHero3D() {
     const initialize = async () => {
       try {
         const THREE = await import("three");
-        const { FBXLoader } = await import(
-          "three/examples/jsm/loaders/FBXLoader.js"
+        const { GLTFLoader } = await import(
+          "three/examples/jsm/loaders/GLTFLoader.js"
+        );
+        const { toCreasedNormals } = await import(
+          "three/examples/jsm/utils/BufferGeometryUtils.js"
         );
         if (disposed || !mountRef.current) return;
 
@@ -81,7 +84,9 @@ export function BasketballHero3D() {
         orbit.rotation.y = -0.25;
         scene.add(orbit);
 
-        const model = await new FBXLoader().loadAsync("/models/basketball.fbx");
+        const { scene: model } = await new GLTFLoader().loadAsync(
+          "/models/basketball.glb",
+        );
         if (disposed) return;
 
         const bounds = new THREE.Box3().setFromObject(model);
@@ -96,130 +101,72 @@ export function BasketballHero3D() {
           -center.z * scale,
         );
 
-        const textureCanvas = document.createElement("canvas");
-        textureCanvas.width = 256;
-        textureCanvas.height = 256;
-        const textureContext = textureCanvas.getContext("2d");
-        if (textureContext) {
-          textureContext.fillStyle = "#e96b2c";
-          textureContext.fillRect(0, 0, 256, 256);
+        const bumpCanvas = document.createElement("canvas");
+        bumpCanvas.width = 256;
+        bumpCanvas.height = 256;
+        const bumpContext = bumpCanvas.getContext("2d");
+        if (bumpContext) {
+          bumpContext.fillStyle = "#727272";
+          bumpContext.fillRect(0, 0, 256, 256);
           let seed = 28411;
           const random = () => {
             seed = (seed * 16807) % 2147483647;
             return (seed - 1) / 2147483646;
           };
-          for (let index = 0; index < 10500; index += 1) {
+          for (let index = 0; index < 11500; index += 1) {
             const x = random() * 256;
             const y = random() * 256;
-            const radius = 0.18 + random() * 0.62;
-            const light = random() > 0.48;
-            textureContext.fillStyle = light
-              ? "rgba(255, 174, 107, 0.32)"
-              : "rgba(84, 36, 16, 0.30)";
-            textureContext.beginPath();
-            textureContext.arc(x, y, radius, 0, Math.PI * 2);
-            textureContext.fill();
+            const radius = 0.24 + random() * 0.62;
+            const shade = 130 + Math.round(random() * 85);
+            bumpContext.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
+            bumpContext.beginPath();
+            bumpContext.arc(x, y, radius, 0, Math.PI * 2);
+            bumpContext.fill();
           }
         }
-        const leatherTexture = new THREE.CanvasTexture(textureCanvas);
-        leatherTexture.colorSpace = THREE.SRGBColorSpace;
-        leatherTexture.wrapS = THREE.RepeatWrapping;
-        leatherTexture.wrapT = THREE.RepeatWrapping;
-        leatherTexture.repeat.set(2.2, 2.2);
-        leatherTexture.anisotropy = Math.min(
+        const leatherBump = new THREE.CanvasTexture(bumpCanvas);
+        leatherBump.wrapS = THREE.RepeatWrapping;
+        leatherBump.wrapT = THREE.RepeatWrapping;
+        leatherBump.repeat.set(2.6, 2.6);
+        leatherBump.anisotropy = Math.min(
           renderer.capabilities.getMaxAnisotropy(),
           4,
         );
 
-        const leatherMaterial = new THREE.MeshPhysicalMaterial({
-          color: 0xf17835,
-          map: leatherTexture,
-          bumpMap: leatherTexture,
-          bumpScale: 0.018,
-          roughness: 0.82,
-          metalness: 0,
-          clearcoat: 0.08,
-          clearcoatRoughness: 0.78,
-        });
         model.traverse((child) => {
           if (child instanceof THREE.Mesh) {
-            const previousMaterials = Array.isArray(child.material)
+            const originalGeometry = child.geometry;
+            child.geometry = toCreasedNormals(
+              originalGeometry,
+              Math.PI * 0.92,
+            );
+            originalGeometry.dispose();
+
+            const materials = Array.isArray(child.material)
               ? child.material
               : [child.material];
-            previousMaterials.forEach((material) => material.dispose());
-            child.material = leatherMaterial;
+            materials.forEach((material) => {
+              if (!(material instanceof THREE.MeshStandardMaterial)) return;
+              material.metalness = 0;
+              material.roughness = Math.max(material.roughness, 0.72);
+              material.bumpMap = leatherBump;
+              material.bumpScale = 0.012;
+              if (material.map) {
+                material.map.colorSpace = THREE.SRGBColorSpace;
+                material.map.anisotropy = Math.min(
+                  renderer?.capabilities.getMaxAnisotropy() ?? 1,
+                  4,
+                );
+              }
+              material.needsUpdate = true;
+            });
             child.castShadow = true;
             child.receiveShadow = true;
           }
         });
 
-        const seamMaterial = new THREE.MeshStandardMaterial({
-          color: 0x29140d,
-          roughness: 0.92,
-          metalness: 0,
-        });
-        const radius = 1.235;
-        const createSeam = (
-          pointAt: (angle: number) => import("three").Vector3,
-          width = 0.026,
-        ) => {
-          const points = Array.from({ length: 96 }, (_, index) =>
-            pointAt((index / 96) * Math.PI * 2),
-          );
-          const curve = new THREE.CatmullRomCurve3(
-            points,
-            true,
-            "catmullrom",
-            0.35,
-          );
-          return new THREE.Mesh(
-            new THREE.TubeGeometry(curve, 128, width, 7, true),
-            seamMaterial,
-          );
-        };
-
-        const seams = [
-          createSeam(
-            (angle) =>
-              new THREE.Vector3(
-                Math.cos(angle) * radius,
-                Math.sin(angle) * radius,
-                0,
-              ),
-          ),
-          createSeam(
-            (angle) =>
-              new THREE.Vector3(
-                0,
-                Math.sin(angle) * radius,
-                Math.cos(angle) * radius,
-              ),
-          ),
-          createSeam((angle) => {
-            const y = Math.sin(angle * 2) * radius * 0.43;
-            const horizontalRadius = Math.sqrt(radius ** 2 - y ** 2);
-            return new THREE.Vector3(
-              Math.cos(angle) * horizontalRadius,
-              y,
-              Math.sin(angle) * horizontalRadius,
-            );
-          }, 0.023),
-          createSeam((angle) => {
-            const x = Math.cos(angle * 2) * radius * 0.43;
-            const verticalRadius = Math.sqrt(radius ** 2 - x ** 2);
-            return new THREE.Vector3(
-              x,
-              Math.sin(angle) * verticalRadius,
-              Math.cos(angle) * verticalRadius,
-            );
-          }, 0.023),
-        ];
-        seams.forEach((seam) => {
-          seam.castShadow = true;
-        });
-
         ball = new THREE.Group();
-        ball.add(model, ...seams);
+        ball.add(model);
         ball.position.y = -0.02;
         ball.rotation.set(-0.12, -0.45, 0.08);
         scene.add(ball);
@@ -284,15 +231,23 @@ export function BasketballHero3D() {
             "pointerleave",
             onPointerLeave,
           );
+          const textures = new Set<import("three").Texture>();
+          const materials = new Set<import("three").Material>();
           scene.traverse((object) => {
             if (!(object instanceof THREE.Mesh)) return;
             object.geometry.dispose();
-            const materials = Array.isArray(object.material)
+            const meshMaterials = Array.isArray(object.material)
               ? object.material
               : [object.material];
-            materials.forEach((material) => material.dispose());
+            meshMaterials.forEach((material) => {
+              materials.add(material);
+              Object.values(material).forEach((value) => {
+                if (value instanceof THREE.Texture) textures.add(value);
+              });
+            });
           });
-          leatherTexture.dispose();
+          materials.forEach((material) => material.dispose());
+          textures.forEach((texture) => texture.dispose());
         };
       } catch {
         if (!disposed) setState("fallback");
@@ -340,6 +295,14 @@ export function BasketballHero3D() {
       <span className="absolute bottom-4 right-4 hidden text-[10px] font-bold uppercase tracking-[0.16em] text-white/50 sm:block">
         Наведи, чтобы повернуть
       </span>
+      <a
+        className="absolute bottom-4 left-4 text-[9px] font-semibold text-white/35 transition hover:text-white/70"
+        href="https://poly.pizza/m/eopD_12UuB8"
+        target="_blank"
+        rel="noreferrer"
+      >
+        3D: Poly by Google · CC BY 3.0
+      </a>
     </div>
   );
 }
