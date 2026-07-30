@@ -10,12 +10,14 @@ import { z } from "zod";
 import {
   bearerToken,
   createRequestClient,
+  createPkceRequestClient,
   createServiceClient,
   getIdentity,
   isModerator,
   refreshCookieName,
   refreshCookieOptions,
   type RequestIdentity,
+  supabaseUrl,
 } from "@/lib/supabase/server";
 import {
   createTelegramSession,
@@ -42,6 +44,13 @@ import {
   serializeGame,
 } from "@/lib/supabase/serializers";
 import { approximateMapLocation } from "@/lib/location-privacy";
+import {
+  googleCallbackUrl,
+  googleOAuthCookieOptions,
+  googleOAuthCookies,
+  isValidGooglePkceVerifier,
+  safeOAuthNext,
+} from "@/lib/supabase/google-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1012,6 +1021,42 @@ async function authTelegram(request: NextRequest) {
   return response;
 }
 
+async function startGoogleLogin(request: NextRequest) {
+  await rateLimit(request, "google-oauth-start", 20, 900);
+  const next = safeOAuthNext(request.nextUrl.searchParams.get("next"));
+  const attempt = createPkceRequestClient();
+  const started = await attempt.client.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: googleCallbackUrl(request),
+      queryParams: { prompt: "select_account" },
+      skipBrowserRedirect: true,
+    },
+  });
+  const verifier = attempt.getCodeVerifier();
+  if (
+    started.error ||
+    !started.data.url ||
+    !isValidGooglePkceVerifier(verifier)
+  ) {
+    throw started.error ?? new Error("Could not start Google OAuth");
+  }
+  const authorizationUrl = new URL(started.data.url);
+  const expectedOrigin = new URL(supabaseUrl()).origin;
+  if (
+    authorizationUrl.origin !== expectedOrigin ||
+    !authorizationUrl.pathname.endsWith("/auth/v1/authorize")
+  ) {
+    throw new Error("Unexpected Supabase authorization URL");
+  }
+
+  const response = NextResponse.redirect(authorizationUrl);
+  const options = googleOAuthCookieOptions();
+  response.cookies.set(googleOAuthCookies.verifier, verifier, options);
+  response.cookies.set(googleOAuthCookies.next, next, options);
+  return response;
+}
+
 function emailConfirmationRedirect(request: NextRequest): string {
   const configured =
     process.env.SITE_URL?.trim() || process.env.TELEGRAM_WEBAPP_URL?.trim();
@@ -1434,6 +1479,9 @@ async function dispatch(
 ): Promise<NextResponse> {
   const [resource, lookup, action] = segments;
   if (resource === "auth") {
+    if (lookup === "google" && action === "start" && request.method === "GET") {
+      return startGoogleLogin(request);
+    }
     if (lookup === "telegram" && request.method === "POST")
       return authTelegram(request);
     if (

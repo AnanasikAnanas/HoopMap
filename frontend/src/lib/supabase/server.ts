@@ -1,4 +1,9 @@
-import { createClient, type SupabaseClient, type User as AuthUser } from "@supabase/supabase-js";
+import {
+  createClient,
+  type SupabaseClient,
+  type SupportedStorage,
+  type User as AuthUser,
+} from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 
 export type ProfileRecord = {
@@ -47,6 +52,42 @@ export function createRequestClient(accessToken?: string): SupabaseClient {
   });
 }
 
+export function createPkceRequestClient(initialCodeVerifier = "") {
+  let codeVerifier = initialCodeVerifier;
+  const storage: SupportedStorage = {
+    getItem(key) {
+      return key.endsWith("-code-verifier") && codeVerifier
+        ? JSON.stringify(codeVerifier)
+        : null;
+    },
+    setItem(key, value) {
+      if (!key.endsWith("-code-verifier")) return;
+      try {
+        const parsed = JSON.parse(value);
+        codeVerifier = typeof parsed === "string" ? parsed : "";
+      } catch {
+        codeVerifier = "";
+      }
+    },
+    removeItem(key) {
+      if (key.endsWith("-code-verifier")) codeVerifier = "";
+    },
+  };
+  const client = createClient(supabaseUrl(), supabaseAnonKey(), {
+    auth: {
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      flowType: "pkce",
+      persistSession: true,
+      storage,
+    },
+  });
+  return {
+    client,
+    getCodeVerifier: () => codeVerifier,
+  };
+}
+
 export function bearerToken(request: NextRequest): string | null {
   const value = request.headers.get("authorization") ?? "";
   return value.startsWith("Bearer ") ? value.slice(7).trim() || null : null;
@@ -59,7 +100,9 @@ export type RequestIdentity = {
   client: SupabaseClient;
 };
 
-export async function getIdentity(request: NextRequest): Promise<RequestIdentity | null> {
+export async function getIdentity(
+  request: NextRequest,
+): Promise<RequestIdentity | null> {
   const accessToken = bearerToken(request);
   if (!accessToken) return null;
   const client = createRequestClient(accessToken);

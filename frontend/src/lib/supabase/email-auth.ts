@@ -18,11 +18,7 @@ export const emailRegistrationSchema = z.object({
     .refine((value) => /\p{L}/u.test(value) && /\p{N}/u.test(value), {
       message: "Добавьте в пароль хотя бы одну букву и одну цифру",
     }),
-  name: z
-    .string()
-    .trim()
-    .min(2, "Укажите имя")
-    .max(80, "Имя слишком длинное"),
+  name: z.string().trim().min(2, "Укажите имя").max(80, "Имя слишком длинное"),
 });
 
 export const emailLoginSchema = z.object({
@@ -32,6 +28,12 @@ export const emailLoginSchema = z.object({
 
 function safeName(value: unknown): string {
   return typeof value === "string" ? value.trim().slice(0, 80) : "";
+}
+
+function safeAvatar(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const avatar = value.trim().slice(0, 500);
+  return avatar.startsWith("https://") ? avatar : "";
 }
 
 function splitName(value: string): { firstName: string; lastName: string } {
@@ -59,6 +61,9 @@ export async function ensureEmailProfile(
   const { firstName, lastName } = splitName(
     safeName(suppliedName) || metadataName || "Игрок",
   );
+  const avatar =
+    safeAvatar(authUser.user_metadata?.avatar_url) ||
+    safeAvatar(authUser.user_metadata?.picture);
   const username = `player_${authUser.id.replaceAll("-", "").slice(0, 12)}`;
   const created = await admin
     .from("profiles")
@@ -68,7 +73,7 @@ export async function ensureEmailProfile(
       username,
       first_name: firstName,
       last_name: lastName,
-      avatar_url: "",
+      avatar_url: avatar,
     })
     .select("*")
     .single();

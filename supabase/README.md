@@ -64,6 +64,24 @@ Email-аккаунты используют Supabase Auth и обычную та
 Для локальной разработки добавьте `http://localhost:3000/login` в Redirect URLs и установите
 `SITE_URL=http://localhost:3000` в `frontend/.env.local`.
 
+### Вход через Google
+
+1. В Google Auth Platform создайте OAuth Client типа **Web application**.
+2. В **Authorized JavaScript origins** добавьте:
+   - `https://YOUR_PROJECT.vercel.app`;
+   - `http://localhost:3000` для локальной разработки.
+3. В **Authorized redirect URIs** добавьте callback, показанный в
+   **Supabase → Authentication → Sign In / Providers → Google**. Он имеет вид
+   `https://PROJECT_REF.supabase.co/auth/v1/callback`.
+4. Включите Google provider в Supabase и сохраните там Google Client ID и Client Secret.
+5. В **Supabase → Authentication → URL Configuration → Redirect URLs** добавьте:
+   - `https://YOUR_PROJECT.vercel.app/auth/callback`;
+   - `http://localhost:3000/auth/callback` для локальной разработки.
+
+Google Client Secret хранится только в Supabase и не добавляется в Vercel. HOOPMAP использует
+серверный PKCE-flow, сохраняет refresh token в `HttpOnly` cookie и создаёт обычную запись
+`profiles` после первого успешного входа.
+
 ## 5. Telegram
 
 После первого deployment:
