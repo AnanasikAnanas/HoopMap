@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "telegram:webhook": "node scripts/configure-telegram-webhook.mjs",
+    "push:keys": "web-push generate-vapid-keys --json",
     "format": "prettier --write ."
   },
   "dependencies": {
@@ -26,6 +27,7 @@
     "react-hook-form": "^7.54.2",
     "tailwind-merge": "^3.0.2",
     "three": "^0.185.1",
+    "web-push": "3.6.7",
     "zod": "^3.24.2",
     "zustand": "^5.0.3"
   },
@@ -37,6 +39,7 @@
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "@types/three": "^0.185.1",
+    "@types/web-push": "3.6.4",
     "autoprefixer": "^10.4.21",
     "eslint": "^9.22.0",
     "eslint-config-next": "16.2.11",

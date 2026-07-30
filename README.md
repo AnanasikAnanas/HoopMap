@@ -37,6 +37,7 @@ flowchart LR
 - атомарное присоединение к игре с контролем количества мест;
 - список участников, редактирование и отмена игры организатором;
 - Telegram-уведомления о новых участниках, переносе и отмене игры;
+- устанавливаемое PWA с Web Push и напоминаниями об играх;
 - Telegram webhook с картой, играми и поиском по геолокации;
 - database-backed rate limits для чувствительных операций;
 - CSP, HSTS и защитные HTTP-заголовки.
@@ -126,6 +127,12 @@ PATCH  /games/{id}/
 POST   /games/{id}/join/
 POST   /games/{id}/leave/
 POST   /games/{id}/cancel/
+
+GET    /notifications/settings/
+PATCH  /notifications/settings/
+POST   /notifications/subscribe/
+DELETE /notifications/subscribe/
+POST   /notifications/test/
 ```
 
 Загрузка фотографий идёт напрямую browser → Supabase Storage по одноразовой подписанной ссылке,

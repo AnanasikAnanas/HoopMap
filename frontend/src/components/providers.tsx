@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { restoreSession, telegramLogin } from "@/lib/api";
 import { ToastProvider } from "@/components/toast";
+import { PwaProvider } from "@/components/pwa-provider";
 
 declare global {
   interface Window {
@@ -91,7 +92,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
   }, [client]);
   return (
     <QueryClientProvider client={client}>
-      <ToastProvider>{children}</ToastProvider>
+      <PwaProvider>
+        <ToastProvider>{children}</ToastProvider>
+      </PwaProvider>
     </QueryClientProvider>
   );
 }

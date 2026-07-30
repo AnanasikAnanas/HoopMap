@@ -48,6 +48,7 @@ import {
   serializeGame,
 } from "@/lib/supabase/serializers";
 import { notifyProfilesInTelegram } from "@/lib/telegram-notifications";
+import { notifyProfilesInWebPush, webPushConfigured } from "@/lib/web-push";
 import { approximateMapLocation } from "@/lib/location-privacy";
 import {
   googleCallbackUrl,
@@ -984,6 +985,53 @@ function gameNotificationDate(value: string): string {
   }).format(new Date(value));
 }
 
+async function notifyGameProfiles(
+  profileIds: number[],
+  telegramText: string,
+  pushTitle: string,
+  pushBody: string,
+  path: string,
+  tag: string,
+): Promise<void> {
+  const uniqueIds = Array.from(
+    new Set(
+      profileIds.filter(
+        (profileId) => Number.isSafeInteger(profileId) && profileId > 0,
+      ),
+    ),
+  );
+  if (!uniqueIds.length) return;
+  try {
+    const preferences = await createServiceClient()
+      .from("notification_preferences")
+      .select("user_id,game_updates")
+      .in("user_id", uniqueIds)
+      .eq("game_updates", false);
+    if (preferences.error) throw preferences.error;
+    const disabled = new Set(
+      (preferences.data ?? []).map((record) => Number(record.user_id)),
+    );
+    const recipients = uniqueIds.filter(
+      (profileId) => !disabled.has(profileId),
+    );
+    await Promise.allSettled([
+      notifyProfilesInTelegram(recipients, telegramText, path),
+      ...(webPushConfigured()
+        ? [
+            notifyProfilesInWebPush(recipients, {
+              title: pushTitle,
+              body: pushBody,
+              url: path,
+              tag,
+            }),
+          ]
+        : []),
+    ]);
+  } catch {
+    // Notification delivery must never roll back the successful game action.
+  }
+}
+
 function profileDisplayName(profile: RequestIdentity["profile"]): string {
   return (
     `${profile.first_name} ${profile.last_name}`.trim() ||
@@ -1079,10 +1127,13 @@ async function updateGame(request: NextRequest, gameId: number) {
   });
   if (updated.error) throwGameMutationError(updated.error);
 
-  await notifyProfilesInTelegram(
+  await notifyGameProfiles(
     gameParticipantIds(before, current!.profile.id),
     `🏀 Игра «${value.title}» обновлена.\nНовое время: ${gameNotificationDate(value.starts_at)}.`,
+    "Игра обновлена 🏀",
+    `«${value.title}» — ${gameNotificationDate(value.starts_at)}`,
     `/games/${gameId}`,
+    `game-${gameId}-updated`,
   );
   return oneGame(request, gameId);
 }
@@ -1097,10 +1148,13 @@ async function cancelGame(request: NextRequest, gameId: number) {
   });
   if (cancelled.error) throwGameMutationError(cancelled.error);
 
-  await notifyProfilesInTelegram(
+  await notifyGameProfiles(
     gameParticipantIds(before, current!.profile.id),
     `❌ Игра «${before.title}» отменена организатором.`,
+    "Игра отменена",
+    `Организатор отменил игру «${before.title}»`,
     `/games/${gameId}`,
+    `game-${gameId}-cancelled`,
   );
   return oneGame(request, gameId);
 }
@@ -1137,12 +1191,18 @@ async function gameMembership(
     throw result.error;
   }
   if (Number(game.creator_id) !== current!.profile.id) {
-    await notifyProfilesInTelegram(
+    const playerName = profileDisplayName(current!.profile);
+    await notifyGameProfiles(
       [Number(game.creator_id)],
       action === "join"
-        ? `🙌 ${profileDisplayName(current!.profile)} присоединился к игре «${game.title}».`
-        : `${profileDisplayName(current!.profile)} вышел из игры «${game.title}».`,
+        ? `🙌 ${playerName} присоединился к игре «${game.title}».`
+        : `${playerName} вышел из игры «${game.title}».`,
+      action === "join" ? "Новый участник" : "Участник вышел",
+      action === "join"
+        ? `${playerName} присоединился к игре «${game.title}»`
+        : `${playerName} вышел из игры «${game.title}»`,
       `/games/${gameId}`,
+      `game-${gameId}-${action}-${current!.profile.id}`,
     );
   }
   return oneGame(request, gameId);
@@ -1349,15 +1409,8 @@ async function requestPasswordReset(request: NextRequest) {
 
 async function updateRecoveredPassword(request: NextRequest) {
   const current = await identity(request, true);
-  await rateLimit(
-    request,
-    "password-update",
-    5,
-    3600,
-    current!.profile.id,
-  );
-  const proof =
-    request.cookies.get(passwordRecoveryCookies.proof)?.value ?? "";
+  await rateLimit(request, "password-update", 5, 3600, current!.profile.id);
+  const proof = request.cookies.get(passwordRecoveryCookies.proof)?.value ?? "";
   if (!verifyPasswordRecoveryProof(proof, current!.authUser.id)) {
     throw new HttpError(
       403,
@@ -1465,6 +1518,166 @@ async function updateMapHome(request: NextRequest) {
     .single();
   if (updated.error) throw updated.error;
   return json(privateUser(updated.data, current!.authUser));
+}
+
+const pushSubscriptionSchema = z.object({
+  endpoint: z
+    .string()
+    .url()
+    .max(4096)
+    .refine((value) => {
+      try {
+        return new URL(value).protocol === "https:";
+      } catch {
+        return false;
+      }
+    }, "Push endpoint must use HTTPS"),
+  keys: z.object({
+    p256dh: z
+      .string()
+      .min(20)
+      .max(512)
+      .regex(/^[A-Za-z0-9_-]+$/),
+    auth: z
+      .string()
+      .min(8)
+      .max(512)
+      .regex(/^[A-Za-z0-9_-]+$/),
+  }),
+});
+
+const notificationPreferencesSchema = z
+  .object({
+    game_updates: z.boolean().optional(),
+    game_reminders: z.boolean().optional(),
+    reminder_24h: z.boolean().optional(),
+    reminder_2h: z.boolean().optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0);
+
+const defaultNotificationPreferences = {
+  game_updates: true,
+  game_reminders: true,
+  reminder_24h: true,
+  reminder_2h: true,
+} as const;
+
+async function notificationSettings(request: NextRequest) {
+  const current = await identity(request, true);
+  const admin = createServiceClient();
+  const [preferences, subscriptions] = await Promise.all([
+    admin
+      .from("notification_preferences")
+      .select("game_updates,game_reminders,reminder_24h,reminder_2h")
+      .eq("user_id", current!.profile.id)
+      .maybeSingle(),
+    admin
+      .from("push_subscriptions")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", current!.profile.id),
+  ]);
+  if (preferences.error) throw preferences.error;
+  if (subscriptions.error) throw subscriptions.error;
+  return json({
+    ...defaultNotificationPreferences,
+    ...(preferences.data ?? {}),
+    subscriptions_count: subscriptions.count ?? 0,
+    server_configured: webPushConfigured(),
+  });
+}
+
+async function subscribeToPush(request: NextRequest) {
+  const current = await identity(request, true);
+  await rateLimit(request, "push-subscribe", 20, 3600, current!.profile.id);
+  if (!webPushConfigured()) {
+    throw new HttpError(503, "Push-уведомления ещё не настроены на сервере");
+  }
+  const input = pushSubscriptionSchema.safeParse(await body(request));
+  if (!input.success) throw new HttpError(400, "Некорректная push-подписка");
+  const admin = createServiceClient();
+  const subscription = await admin
+    .from("push_subscriptions")
+    .upsert(
+      {
+        user_id: current!.profile.id,
+        endpoint: input.data.endpoint,
+        p256dh: input.data.keys.p256dh,
+        auth: input.data.keys.auth,
+        user_agent: (request.headers.get("user-agent") ?? "").slice(0, 500),
+        last_seen_at: new Date().toISOString(),
+      },
+      { onConflict: "endpoint" },
+    )
+    .select("id")
+    .single();
+  if (subscription.error) throw subscription.error;
+  const preferences = await admin.from("notification_preferences").upsert(
+    {
+      user_id: current!.profile.id,
+      ...defaultNotificationPreferences,
+    },
+    { onConflict: "user_id", ignoreDuplicates: true },
+  );
+  if (preferences.error) throw preferences.error;
+  return notificationSettings(request);
+}
+
+async function unsubscribeFromPush(request: NextRequest) {
+  const current = await identity(request, true);
+  const input = z
+    .object({ endpoint: z.string().url().max(4096) })
+    .safeParse(await body(request));
+  if (!input.success) throw new HttpError(400, "Некорректная push-подписка");
+  const removed = await createServiceClient()
+    .from("push_subscriptions")
+    .delete()
+    .eq("user_id", current!.profile.id)
+    .eq("endpoint", input.data.endpoint);
+  if (removed.error) throw removed.error;
+  return notificationSettings(request);
+}
+
+async function updateNotificationSettings(request: NextRequest) {
+  const current = await identity(request, true);
+  await rateLimit(
+    request,
+    "notification-settings",
+    30,
+    3600,
+    current!.profile.id,
+  );
+  const input = notificationPreferencesSchema.safeParse(await body(request));
+  if (!input.success) throw new HttpError(400, "Некорректные настройки");
+  const updated = await createServiceClient()
+    .from("notification_preferences")
+    .upsert(
+      { user_id: current!.profile.id, ...input.data },
+      { onConflict: "user_id" },
+    );
+  if (updated.error) throw updated.error;
+  return notificationSettings(request);
+}
+
+async function sendTestPush(request: NextRequest) {
+  const current = await identity(request, true);
+  await rateLimit(request, "push-test", 3, 3600, current!.profile.id);
+  if (!webPushConfigured()) {
+    throw new HttpError(503, "Push-уведомления ещё не настроены на сервере");
+  }
+  const results = await notifyProfilesInWebPush([current!.profile.id], {
+    title: "HOOPMAP готов 🏀",
+    body: "Уведомления подключены. Здесь появятся напоминания об играх.",
+    url: "/profile",
+    tag: `push-test-${current!.profile.id}`,
+  });
+  const result = results[0];
+  if (!result?.subscriptions) {
+    throw new HttpError(409, "На этом профиле нет активной подписки");
+  }
+  if (!result.delivered && result.retryableFailures) {
+    throw new HttpError(502, "Не удалось доставить тестовое уведомление");
+  }
+  return json({ delivered: result.delivered });
 }
 
 const telegramOidcCookies = {
@@ -1833,6 +2046,23 @@ async function dispatch(
       return gameMembership(request, gameId, "leave");
     if (action === "cancel" && request.method === "POST")
       return cancelGame(request, gameId);
+  }
+  if (resource === "notifications") {
+    if (lookup === "settings" && request.method === "GET") {
+      return notificationSettings(request);
+    }
+    if (lookup === "settings" && request.method === "PATCH") {
+      return updateNotificationSettings(request);
+    }
+    if (lookup === "subscribe" && request.method === "POST") {
+      return subscribeToPush(request);
+    }
+    if (lookup === "subscribe" && request.method === "DELETE") {
+      return unsubscribeFromPush(request);
+    }
+    if (lookup === "test" && request.method === "POST") {
+      return sendTestPush(request);
+    }
   }
   throw new HttpError(404, "Маршрут не найден");
 }

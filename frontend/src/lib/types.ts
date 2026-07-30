@@ -73,3 +73,20 @@ export type Page<T> = {
   previous: string | null;
   results: T[];
 };
+
+export type NotificationSettings = {
+  game_updates: boolean;
+  game_reminders: boolean;
+  reminder_24h: boolean;
+  reminder_2h: boolean;
+  subscriptions_count: number;
+  server_configured: boolean;
+};
+
+export type PushSubscriptionInput = {
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+};

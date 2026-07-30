@@ -1,15 +1,45 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import "./globals.css";
 import { Providers } from "@/components/providers";
 import { TelegramBootstrap } from "@/components/telegram-bootstrap";
 
 export const metadata: Metadata = {
+  applicationName: "HOOPMAP",
   title: {
     default: "HOOPMAP — баскетбольные площадки",
     template: "%s — HOOPMAP",
   },
   description: "Площадки, игры и баскетбольное сообщество рядом с вами",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [
+      { url: "/icons/hoopmap-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/hoopmap-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [
+      {
+        url: "/icons/apple-touch-icon.png",
+        sizes: "180x180",
+        type: "image/png",
+      },
+    ],
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "HOOPMAP",
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f26a2e" },
+    { media: "(prefers-color-scheme: dark)", color: "#181c21" },
+  ],
 };
 
 export default async function RootLayout({

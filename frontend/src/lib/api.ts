@@ -1,4 +1,11 @@
-import type { Court, Game, Page, User } from "./types";
+import type {
+  Court,
+  Game,
+  NotificationSettings,
+  Page,
+  PushSubscriptionInput,
+  User,
+} from "./types";
 import { createClient } from "@supabase/supabase-js";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "/api/v1").replace(
@@ -136,8 +143,38 @@ export const gamesApi = {
       body: "{}",
     }),
   join: (id: number) => api<Game>(`/games/${id}/join/`, { method: "POST" }),
-  leave: (id: number) =>
-    api<Game>(`/games/${id}/leave/`, { method: "POST" }),
+  leave: (id: number) => api<Game>(`/games/${id}/leave/`, { method: "POST" }),
+};
+
+export const notificationsApi = {
+  settings: () => api<NotificationSettings>("/notifications/settings/"),
+  subscribe: (subscription: PushSubscriptionInput) =>
+    api<NotificationSettings>("/notifications/subscribe/", {
+      method: "POST",
+      body: JSON.stringify(subscription),
+    }),
+  unsubscribe: (endpoint: string) =>
+    api<NotificationSettings>("/notifications/subscribe/", {
+      method: "DELETE",
+      body: JSON.stringify({ endpoint }),
+    }),
+  update: (
+    preferences: Partial<
+      Pick<
+        NotificationSettings,
+        "game_updates" | "game_reminders" | "reminder_24h" | "reminder_2h"
+      >
+    >,
+  ) =>
+    api<NotificationSettings>("/notifications/settings/", {
+      method: "PATCH",
+      body: JSON.stringify(preferences),
+    }),
+  test: () =>
+    api<{ delivered: number }>("/notifications/test/", {
+      method: "POST",
+      body: "{}",
+    }),
 };
 
 export const authApi = {

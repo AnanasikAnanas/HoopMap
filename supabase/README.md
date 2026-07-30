@@ -160,6 +160,36 @@ HOOPMAP автоматически предпочитает OIDC.
 `TELEGRAM_LOGIN_CLIENT_SECRET`, как и токен бота, является серверным секретом. Его нельзя
 добавлять в `NEXT_PUBLIC_*`, GitHub или клиентский код.
 
+### PWA и Web Push
+
+HOOPMAP устанавливается с сайта как PWA. Отдельный сервер не нужен: Next.js на Vercel принимает
+подписки и отправляет Web Push, а Supabase хранит устройства и атомарно выбирает напоминания.
+
+1. В каталоге `frontend` выполните `npm run push:keys`.
+2. В Vercel → **Settings → Environment Variables** добавьте:
+   - `NEXT_PUBLIC_VAPID_PUBLIC_KEY` — публичный ключ из команды;
+   - `VAPID_PRIVATE_KEY` — приватный ключ из команды;
+   - `VAPID_SUBJECT=https://hoop-map.vercel.app`;
+   - `CRON_SECRET` — отдельную случайную строку длиной не менее 32 символов.
+3. После деплоя откройте Supabase → **Integrations → Cron** и создайте HTTP Request:
+   - имя: `hoopmap-game-reminders`;
+   - расписание: `*/15 * * * *`;
+   - метод: `POST`;
+   - URL: `https://hoop-map.vercel.app/api/cron/game-reminders`;
+   - заголовок `Authorization`: `Bearer ЗНАЧЕНИЕ_CRON_SECRET`;
+   - заголовок `Content-Type`: `application/json`;
+   - тело: `{}`.
+4. Войдите на сайт, откройте профиль и включите уведомления в разделе
+   **Приложение и уведомления**.
+
+На iPhone Web Push включается только после добавления сайта на экран «Домой» и запуска с иконки.
+В Telegram Mini App остаются уведомления от бота, потому что встроенный браузер может не
+поддерживать Web Push.
+
+Таблицы `push_subscriptions`, `notification_preferences` и `game_reminder_deliveries` закрыты для
+`anon` и `authenticated`. Доступ к ним имеет только серверный `service_role`. Функция
+`claim_game_reminders` также доступна только серверной роли и защищает от повторных отправок.
+
 ## 6. Первый администратор
 
 Сначала создайте аккаунт по email или откройте сайт через Telegram Mini App хотя бы один раз.

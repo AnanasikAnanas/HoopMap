@@ -16,6 +16,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Header, MobileNav } from "@/components/header";
 import { Button, Card } from "@/components/ui";
+import { PwaSettings } from "@/components/pwa-settings";
 import { authApi, logout } from "@/lib/api";
 
 export default function ProfilePage() {
@@ -158,8 +159,8 @@ export default function ProfilePage() {
               <div className="min-w-0 flex-1">
                 <h2 className="font-bold">Способы входа</h2>
                 <p className="mt-1 text-sm leading-6 text-muted">
-                  Все способы ведут в один профиль — с общими площадками,
-                  играми и избранным.
+                  Все способы ведут в один профиль — с общими площадками, играми
+                  и избранным.
                 </p>
                 <div className="mt-5 divide-y divide-line overflow-hidden rounded-2xl border border-line">
                   <div className="flex items-center gap-3 p-4">
@@ -169,8 +170,8 @@ export default function ProfilePage() {
                         {!user.email
                           ? "Google или email"
                           : user.auth_providers.includes("google")
-                          ? "Google"
-                          : "Email"}
+                            ? "Google"
+                            : "Email"}
                       </p>
                       <p className="truncate text-xs text-muted">
                         {user.email ||
@@ -196,9 +197,7 @@ export default function ProfilePage() {
                     ) : (
                       <Button
                         type="button"
-                        disabled={
-                          telegramLink.isPending || waitingForTelegram
-                        }
+                        disabled={telegramLink.isPending || waitingForTelegram}
                         onClick={() => {
                           setAccountMessage("");
                           telegramLink.mutate();
@@ -266,6 +265,7 @@ export default function ProfilePage() {
             </div>
           </Card>
         )}
+        {user && <PwaSettings />}
         {user?.role !== "user" && (
           <Link
             className="mt-5 inline-block font-bold text-orange"

@@ -11,7 +11,9 @@ const supabaseHost = (() => {
 })();
 const mediaHost = process.env.NEXT_PUBLIC_MEDIA_HOST?.trim() || supabaseHost;
 if (mediaHost && !/^[a-z0-9.-]+$/i.test(mediaHost)) {
-  throw new Error("NEXT_PUBLIC_MEDIA_HOST must be a hostname without a protocol or path");
+  throw new Error(
+    "NEXT_PUBLIC_MEDIA_HOST must be a hostname without a protocol or path",
+  );
 }
 
 const nextConfig: NextConfig = {
@@ -23,7 +25,9 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       { protocol: "http", hostname: "localhost" },
       { protocol: "http", hostname: "minio" },
-      ...(mediaHost ? [{ protocol: "https" as const, hostname: mediaHost }] : []),
+      ...(mediaHost
+        ? [{ protocol: "https" as const, hostname: mediaHost }]
+        : []),
     ],
   },
   async headers() {
@@ -44,7 +48,27 @@ const nextConfig: NextConfig = {
         value: "max-age=31536000; includeSubDomains",
       });
     }
-    return [{ source: "/(.*)", headers }];
+    return [
+      {
+        source: "/sw.js",
+        headers: [
+          {
+            key: "Content-Type",
+            value: "application/javascript; charset=utf-8",
+          },
+          {
+            key: "Cache-Control",
+            value: "no-cache, no-store, must-revalidate",
+          },
+          { key: "Service-Worker-Allowed", value: "/" },
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'self'; script-src 'self'",
+          },
+        ],
+      },
+      { source: "/(.*)", headers },
+    ];
   },
 };
 
