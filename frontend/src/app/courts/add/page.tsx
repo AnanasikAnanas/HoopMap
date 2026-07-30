@@ -7,10 +7,12 @@ import {
   ChevronLeft,
   ChevronRight,
   ImagePlus,
+  LoaderCircle,
+  LocateFixed,
   MapPin,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { CourtsMap } from "@/components/courts-map";
@@ -21,7 +23,7 @@ import {
 import { Header } from "@/components/header";
 import { useToast } from "@/components/toast";
 import { Button, Card, Input } from "@/components/ui";
-import { ApiError, courtsApi } from "@/lib/api";
+import { ApiError, authApi, courtsApi } from "@/lib/api";
 import {
   hapticNotification,
   hapticSelection,
@@ -48,10 +50,23 @@ export default function AddCourtPage() {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [location, setLocation] = useState<{ lat: number; lon: number }>();
+  const [userLocation, setUserLocation] = useState<{
+    lat: number;
+    lon: number;
+  }>();
+  const [locationState, setLocationState] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+  const [focusLocationRequest, setFocusLocationRequest] = useState(0);
   const [photo, setPhoto] = useState<File>();
   const [error, setError] = useState("");
   const [createdCourtSlug, setCreatedCourtSlug] = useState("");
   const { showToast } = useToast();
+  const { data: user } = useQuery({
+    queryKey: ["me"],
+    queryFn: authApi.me,
+    retry: false,
+  });
   const {
     register,
     handleSubmit,
@@ -110,6 +125,65 @@ export default function AddCourtPage() {
     );
     return () => window.clearTimeout(timer);
   }, [createdCourtSlug, router]);
+  const requestUserLocation = useCallback(
+    (announce = false) => {
+      if (!("geolocation" in navigator)) {
+        setLocationState("error");
+        if (announce) {
+          hapticNotification("error");
+          showToast("Геолокация не поддерживается устройством", {
+            tone: "error",
+          });
+        }
+        return;
+      }
+      setLocationState("loading");
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setUserLocation({
+            lat: position.coords.latitude,
+            lon: position.coords.longitude,
+          });
+          setLocationState("ready");
+          if (announce) {
+            setFocusLocationRequest((request) => request + 1);
+            hapticSelection();
+            showToast("Карта перемещена к вашей геопозиции", {
+              tone: "info",
+              duration: 2200,
+            });
+          }
+        },
+        () => {
+          setLocationState("error");
+          if (announce) {
+            hapticNotification("error");
+            showToast("Разрешите доступ к геопозиции в настройках", {
+              tone: "error",
+            });
+          }
+        },
+        {
+          enableHighAccuracy: false,
+          timeout: 10_000,
+          maximumAge: 5 * 60_000,
+        },
+      );
+    },
+    [showToast],
+  );
+  useEffect(() => {
+    const timer = window.setTimeout(() => requestUserLocation(), 0);
+    return () => window.clearTimeout(timer);
+  }, [requestUserLocation]);
+  const focusUserLocation = () => {
+    hapticSelection();
+    if (userLocation) {
+      setFocusLocationRequest((request) => request + 1);
+      return;
+    }
+    requestUserLocation(true);
+  };
   const values = useWatch({ control });
   const next = async () => {
     if (step === 0 && !location) {
@@ -152,6 +226,9 @@ export default function AddCourtPage() {
               <div className="h-[55vh]">
                 <CourtsMap
                   courts={[]}
+                  initialCenter={userLocation ?? user?.map_home ?? undefined}
+                  userLocation={userLocation}
+                  focusLocationRequest={focusLocationRequest}
                   pickLocation={(nextLocation) => {
                     hapticSelection();
                     setLocation(nextLocation);
@@ -159,18 +236,43 @@ export default function AddCourtPage() {
                   picked={location}
                 />
               </div>
-              <div className="flex items-center gap-3 p-4">
-                <MapPin className="text-orange" />
-                <div>
-                  <p className="font-bold">
-                    {location ? "Точка выбрана" : "Нажмите на площадку"}
-                  </p>
-                  <p className="text-sm text-muted">
-                    {location
-                      ? `${location.lat.toFixed(6)}, ${location.lon.toFixed(6)}`
-                      : "Координаты будут проверены сервером"}
-                  </p>
+              <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  <MapPin className="shrink-0 text-orange" />
+                  <div>
+                    <p className="font-bold">
+                      {location ? "Точка выбрана" : "Нажмите на площадку"}
+                    </p>
+                    <p className="text-sm text-muted">
+                      {location
+                        ? `${location.lat.toFixed(6)}, ${location.lon.toFixed(6)}`
+                        : locationState === "loading"
+                          ? "Определяем ваше местоположение…"
+                          : locationState === "ready"
+                            ? "Карта открыта рядом с вами"
+                            : user?.map_home
+                              ? "Открыт сохранённый район профиля"
+                              : locationState === "error"
+                                ? "Выберите точку вручную или повторите попытку"
+                                : "Координаты будут проверены сервером"}
+                    </p>
+                  </div>
                 </div>
+                <Button
+                  type="button"
+                  className="bg-surface text-ink ring-1 ring-line"
+                  disabled={locationState === "loading"}
+                  onClick={focusUserLocation}
+                >
+                  {locationState === "loading" ? (
+                    <LoaderCircle className="animate-spin" />
+                  ) : (
+                    <LocateFixed />
+                  )}
+                  {locationState === "loading"
+                    ? "Определяем…"
+                    : "Моя геопозиция"}
+                </Button>
               </div>
               {duplicates.data?.results.length ? (
                 <div className="border-t border-warning/30 bg-warning/10 p-4 text-sm">
