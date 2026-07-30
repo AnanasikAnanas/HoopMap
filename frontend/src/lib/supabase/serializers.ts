@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Court, Game, PublicUser, User } from "@/lib/types";
+import type { User as AuthUser } from "@supabase/supabase-js";
 import type { ProfileRecord } from "./server";
 
 const bucket = process.env.SUPABASE_STORAGE_BUCKET?.trim() || "hoopmap-media";
@@ -18,14 +19,29 @@ export function publicUser(record: any): PublicUser | null {
   };
 }
 
-export function privateUser(record: ProfileRecord): User {
+export function privateUser(record: ProfileRecord, authUser?: AuthUser): User {
   const hasMapHome =
     record.map_home_lat != null &&
     record.map_home_lon != null &&
     Boolean(record.map_home_consent_at);
+  const providers = new Set<string>();
+  for (const provider of authUser?.app_metadata?.providers ?? []) {
+    if (typeof provider === "string") providers.add(provider);
+  }
+  for (const account of authUser?.identities ?? []) {
+    if (account.provider) providers.add(account.provider);
+  }
+  const email =
+    authUser?.email && !authUser.email.endsWith("@users.hoopmap.invalid")
+      ? authUser.email
+      : null;
+  if (!email) providers.delete("email");
+  if (record.telegram_id) providers.add("telegram");
   return {
     ...(publicUser(record) as PublicUser),
     telegram_id: record.telegram_id,
+    email,
+    auth_providers: Array.from(providers),
     map_home: hasMapHome
       ? {
           lat: Number(record.map_home_lat),

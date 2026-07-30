@@ -1,7 +1,16 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Heart, MapPin, MapPinned, Trophy } from "lucide-react";
+import {
+  BadgeCheck,
+  Heart,
+  Link2,
+  Mail,
+  MapPin,
+  MapPinned,
+  Send,
+  Trophy,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -14,10 +23,32 @@ export default function ProfilePage() {
   const router = useRouter();
   const [locationMessage, setLocationMessage] = useState("");
   const [locating, setLocating] = useState(false);
+  const [waitingForTelegram, setWaitingForTelegram] = useState(false);
+  const [accountMessage, setAccountMessage] = useState("");
   const { data: user, isError } = useQuery({
     queryKey: ["me"],
     queryFn: authApi.me,
     retry: false,
+    refetchInterval: (query) =>
+      waitingForTelegram &&
+      !(query.state.data as { telegram_id?: number | null } | undefined)
+        ?.telegram_id
+        ? 3000
+        : false,
+  });
+  const telegramLink = useMutation({
+    mutationFn: authApi.createTelegramLink,
+    onSuccess: ({ url }) => {
+      setWaitingForTelegram(true);
+      setAccountMessage(
+        "Подтвердите привязку в Telegram. Страница обновится автоматически.",
+      );
+      window.location.assign(url);
+    },
+    onError: () =>
+      setAccountMessage(
+        "Не удалось создать ссылку. Обновите страницу и попробуйте снова.",
+      ),
   });
   const mapHome = useMutation({
     mutationFn: authApi.updateMapHome,
@@ -120,6 +151,80 @@ export default function ProfilePage() {
             </Link>
           ))}
         </div>
+        {user && (
+          <Card className="mt-5 p-5 md:p-6">
+            <div className="flex items-start gap-3">
+              <Link2 className="mt-0.5 shrink-0 text-orange" />
+              <div className="min-w-0 flex-1">
+                <h2 className="font-bold">Способы входа</h2>
+                <p className="mt-1 text-sm leading-6 text-muted">
+                  Все способы ведут в один профиль — с общими площадками,
+                  играми и избранным.
+                </p>
+                <div className="mt-5 divide-y divide-line overflow-hidden rounded-2xl border border-line">
+                  <div className="flex items-center gap-3 p-4">
+                    <Mail className="size-5 shrink-0 text-muted" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-bold">
+                        {!user.email
+                          ? "Google или email"
+                          : user.auth_providers.includes("google")
+                          ? "Google"
+                          : "Email"}
+                      </p>
+                      <p className="truncate text-xs text-muted">
+                        {user.email ||
+                          "Сначала создайте основной аккаунт на странице входа"}
+                      </p>
+                    </div>
+                    {user.email && (
+                      <BadgeCheck className="size-5 shrink-0 text-green-600" />
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 p-4">
+                    <Send className="size-5 shrink-0 text-muted" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-bold">Telegram</p>
+                      <p className="text-xs text-muted">
+                        {user.telegram_id
+                          ? "Подключён к этому профилю"
+                          : "Для входа через бота и Mini App"}
+                      </p>
+                    </div>
+                    {user.telegram_id ? (
+                      <BadgeCheck className="size-5 shrink-0 text-green-600" />
+                    ) : (
+                      <Button
+                        type="button"
+                        disabled={
+                          telegramLink.isPending || waitingForTelegram
+                        }
+                        onClick={() => {
+                          setAccountMessage("");
+                          telegramLink.mutate();
+                        }}
+                      >
+                        {telegramLink.isPending
+                          ? "Создаём…"
+                          : waitingForTelegram
+                            ? "Ждём Telegram…"
+                            : "Подключить"}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {(accountMessage ||
+                  (waitingForTelegram && user.telegram_id)) && (
+                  <p className="mt-3 text-sm text-muted">
+                    {waitingForTelegram && user.telegram_id
+                      ? "Telegram успешно подключён."
+                      : accountMessage}
+                  </p>
+                )}
+              </div>
+            </div>
+          </Card>
+        )}
         {user && (
           <Card className="mt-5 p-5 md:p-6">
             <div className="flex items-start gap-3">

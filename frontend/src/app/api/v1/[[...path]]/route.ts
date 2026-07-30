@@ -25,10 +25,13 @@ import {
   validateTelegramInitData,
   validateTelegramLoginWidgetData,
 } from "@/lib/supabase/telegram-auth";
+import { issueTelegramAccountLink } from "@/lib/supabase/account-linking";
 import {
   emailLoginSchema,
   emailRegistrationSchema,
   ensureEmailProfile,
+  passwordResetRequestSchema,
+  passwordUpdateSchema,
 } from "@/lib/supabase/email-auth";
 import {
   createTelegramOidcAttempt,
@@ -51,6 +54,13 @@ import {
   isValidGooglePkceVerifier,
   safeOAuthNext,
 } from "@/lib/supabase/google-auth";
+import {
+  isValidRecoveryPkceVerifier,
+  passwordRecoveryCookieOptions,
+  passwordRecoveryCookies,
+  passwordRecoveryUrl,
+  verifyPasswordRecoveryProof,
+} from "@/lib/supabase/password-recovery";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1011,7 +1021,7 @@ async function authTelegram(request: NextRequest) {
   const session = await createTelegramSession(profile);
   const response = json({
     access: session.access_token,
-    user: privateUser(profile),
+    user: privateUser(profile, session.user),
   });
   response.cookies.set(
     refreshCookieName(),
@@ -1074,10 +1084,11 @@ function sessionResponse(
   accessToken: string,
   refreshToken: string,
   profile: Awaited<ReturnType<typeof ensureEmailProfile>>,
+  authUser: Parameters<typeof privateUser>[1],
 ) {
   const response = json({
     access: accessToken,
-    user: privateUser(profile),
+    user: privateUser(profile, authUser),
     requires_confirmation: false,
   });
   response.cookies.set(
@@ -1135,7 +1146,12 @@ async function authEmailRegister(request: NextRequest) {
   const profile = await ensureEmailProfile(authUser, parsed.data.name);
   const session = registered.data.session;
   if (!session) return confirmationResponse();
-  return sessionResponse(session.access_token, session.refresh_token, profile);
+  return sessionResponse(
+    session.access_token,
+    session.refresh_token,
+    profile,
+    authUser,
+  );
 }
 
 async function authEmailLogin(request: NextRequest) {
@@ -1155,7 +1171,94 @@ async function authEmailLogin(request: NextRequest) {
     signedIn.data.session.access_token,
     signedIn.data.session.refresh_token,
     profile,
+    signedIn.data.user,
   );
+}
+
+async function requestPasswordReset(request: NextRequest) {
+  await rateLimit(request, "password-reset-request", 5, 3600);
+  const parsed = passwordResetRequestSchema.safeParse(await body(request));
+  if (!parsed.success) {
+    throw new HttpError(400, "Введите корректный email");
+  }
+
+  const attempt = createPkceRequestClient();
+  const requested = await attempt.client.auth.resetPasswordForEmail(
+    parsed.data.email,
+    { redirectTo: passwordRecoveryUrl(request) },
+  );
+  const verifier = attempt.getCodeVerifier();
+  if (requested.error) {
+    console.error("Password reset request could not be sent");
+  }
+  const response = json(
+    {
+      message:
+        "Если такой аккаунт существует, мы отправили письмо для смены пароля.",
+    },
+    202,
+  );
+  if (!requested.error && isValidRecoveryPkceVerifier(verifier)) {
+    response.cookies.set(
+      passwordRecoveryCookies.verifier,
+      verifier,
+      passwordRecoveryCookieOptions(),
+    );
+  }
+  return response;
+}
+
+async function updateRecoveredPassword(request: NextRequest) {
+  const current = await identity(request, true);
+  await rateLimit(
+    request,
+    "password-update",
+    5,
+    3600,
+    current!.profile.id,
+  );
+  const proof =
+    request.cookies.get(passwordRecoveryCookies.proof)?.value ?? "";
+  if (!verifyPasswordRecoveryProof(proof, current!.authUser.id)) {
+    throw new HttpError(
+      403,
+      "Ссылка для смены пароля недействительна или истекла",
+    );
+  }
+  const parsed = passwordUpdateSchema.safeParse(await body(request));
+  if (!parsed.success) {
+    throw new HttpError(
+      400,
+      parsed.error.issues[0]?.message ?? "Проверьте новый пароль",
+    );
+  }
+  const updated = await current!.client.auth.updateUser({
+    password: parsed.data.password,
+  });
+  if (updated.error) {
+    throw new HttpError(400, "Не удалось установить новый пароль");
+  }
+  const response = empty();
+  response.cookies.set(passwordRecoveryCookies.proof, "", {
+    ...passwordRecoveryCookieOptions(),
+    maxAge: 0,
+  });
+  return response;
+}
+
+async function createTelegramAccountLink(request: NextRequest) {
+  const current = await identity(request, true);
+  await rateLimit(
+    request,
+    "telegram-account-link",
+    5,
+    3600,
+    current!.profile.id,
+  );
+  if (current!.profile.telegram_id) {
+    throw new HttpError(409, "Telegram уже подключён к этому профилю");
+  }
+  return json(await issueTelegramAccountLink(current!.profile), 201);
 }
 
 async function authRefresh(request: NextRequest) {
@@ -1222,7 +1325,7 @@ async function updateMapHome(request: NextRequest) {
     .select("*")
     .single();
   if (updated.error) throw updated.error;
-  return json(privateUser(updated.data));
+  return json(privateUser(updated.data, current!.authUser));
 }
 
 const telegramOidcCookies = {
@@ -1522,15 +1625,32 @@ async function dispatch(
     if (lookup === "email" && action === "login" && request.method === "POST") {
       return authEmailLogin(request);
     }
+    if (
+      lookup === "password" &&
+      action === "reset" &&
+      request.method === "POST"
+    ) {
+      return requestPasswordReset(request);
+    }
+    if (
+      lookup === "password" &&
+      action === "update" &&
+      request.method === "POST"
+    ) {
+      return updateRecoveredPassword(request);
+    }
     if (lookup === "refresh" && request.method === "POST")
       return authRefresh(request);
     if (lookup === "logout" && request.method === "POST") return authLogout();
+    if (lookup === "telegram-link" && request.method === "POST") {
+      return createTelegramAccountLink(request);
+    }
     if (lookup === "map-home" && request.method === "PATCH") {
       return updateMapHome(request);
     }
     if (lookup === "me" && request.method === "GET") {
       const current = await identity(request, true);
-      return json(privateUser(current!.profile));
+      return json(privateUser(current!.profile, current!.authUser));
     }
   }
   if (resource === "courts") {

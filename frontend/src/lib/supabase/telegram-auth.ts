@@ -213,7 +213,11 @@ export async function ensureTelegramUser(
 
 export async function createTelegramSession(profile: ProfileRecord) {
   const admin = createServiceClient();
-  const email = telegramEmail(profile.telegram_id!);
+  const authUser = await admin.auth.admin.getUserById(profile.auth_user_id);
+  const email = authUser.data.user?.email;
+  if (authUser.error || !email) {
+    throw authUser.error ?? new Error("Could not find linked account");
+  }
   const link = await admin.auth.admin.generateLink({
     type: "magiclink",
     email,

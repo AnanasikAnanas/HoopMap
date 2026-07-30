@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   emailLoginSchema,
   emailRegistrationSchema,
+  passwordUpdateSchema,
 } from "@/lib/supabase/email-auth";
 
 describe("email authentication validation", () => {
@@ -43,5 +44,14 @@ describe("email authentication validation", () => {
         password: "legacy",
       }).success,
     ).toBe(true);
+  });
+
+  it("applies the strong-password policy during recovery", () => {
+    expect(
+      passwordUpdateSchema.safeParse({ password: "basketball2026" }).success,
+    ).toBe(true);
+    expect(
+      passwordUpdateSchema.safeParse({ password: "onlyletters" }).success,
+    ).toBe(false);
   });
 });

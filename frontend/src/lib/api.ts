@@ -131,10 +131,25 @@ export const gamesApi = {
 
 export const authApi = {
   me: () => api<User>("/auth/me/"),
+  createTelegramLink: () =>
+    api<{ url: string; expires_at: string }>("/auth/telegram-link/", {
+      method: "POST",
+      body: "{}",
+    }),
   updateMapHome: (location: { lat: number; lon: number } | null) =>
     api<User>("/auth/map-home/", {
       method: "PATCH",
       body: JSON.stringify(location ? { location } : { clear: true }),
+    }),
+  requestPasswordReset: (email: string) =>
+    api<{ message: string }>("/auth/password/reset/", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+  updatePassword: (password: string) =>
+    api<void>("/auth/password/update/", {
+      method: "POST",
+      body: JSON.stringify({ password }),
     }),
 };
 

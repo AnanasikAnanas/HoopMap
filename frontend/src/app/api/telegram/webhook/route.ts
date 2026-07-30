@@ -6,6 +6,7 @@ import {
   telegramWebhookSecret,
   type TelegramIdentity,
 } from "@/lib/supabase/telegram-auth";
+import { consumeTelegramAccountLink } from "@/lib/supabase/account-linking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -120,9 +121,34 @@ async function sendNearby(message: TelegramMessage) {
 }
 
 async function handleMessage(message: TelegramMessage) {
-  if (message.from && !message.from.is_bot) await ensureTelegramUser(identity(message.from));
+  const parts = (message.text ?? "").trim().split(/\s+/);
+  const command = parts[0].split("@")[0];
+  const linkToken =
+    command === "/start" && parts[1]?.startsWith("link_")
+      ? parts[1].slice(5)
+      : "";
+
+  if (linkToken && message.from && !message.from.is_bot) {
+    try {
+      await consumeTelegramAccountLink(linkToken, identity(message.from));
+      await send(
+        message.chat.id,
+        "✅ <b>Telegram подключён</b>\n\nТеперь на сайте и в Mini App используется один профиль. Площадки, игры и избранное сохранены.",
+        inlineButton("Открыть профиль", "/profile"),
+      );
+    } catch {
+      await send(
+        message.chat.id,
+        "Ссылка недействительна, уже использована или истекла. Создайте новую в профиле HOOPMAP.",
+        inlineButton("Открыть профиль", "/profile"),
+      );
+    }
+    return;
+  }
+
+  if (message.from && !message.from.is_bot)
+    await ensureTelegramUser(identity(message.from));
   if (message.location) return sendNearby(message);
-  const command = (message.text ?? "").trim().split(/\s+/)[0].split("@")[0];
   if (command === "/start") {
     await send(
       message.chat.id,

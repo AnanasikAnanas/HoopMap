@@ -2,29 +2,34 @@ import type { User as AuthUser } from "@supabase/supabase-js";
 import { z } from "zod";
 import { createServiceClient, type ProfileRecord } from "./server";
 
-const email = z
+export const emailSchema = z
   .string()
   .trim()
   .email("Введите корректный email")
   .max(254)
   .transform((value) => value.toLowerCase());
 
-export const emailRegistrationSchema = z.object({
-  email,
-  password: z
+export const passwordSchema = z
     .string()
     .min(10, "Пароль должен содержать минимум 10 символов")
     .max(72, "Пароль должен содержать не больше 72 символов")
     .refine((value) => /\p{L}/u.test(value) && /\p{N}/u.test(value), {
       message: "Добавьте в пароль хотя бы одну букву и одну цифру",
-    }),
+    });
+
+export const emailRegistrationSchema = z.object({
+  email: emailSchema,
+  password: passwordSchema,
   name: z.string().trim().min(2, "Укажите имя").max(80, "Имя слишком длинное"),
 });
 
 export const emailLoginSchema = z.object({
-  email,
+  email: emailSchema,
   password: z.string().min(1).max(72),
 });
+
+export const passwordResetRequestSchema = z.object({ email: emailSchema });
+export const passwordUpdateSchema = z.object({ password: passwordSchema });
 
 function safeName(value: unknown): string {
   return typeof value === "string" ? value.trim().slice(0, 80) : "";

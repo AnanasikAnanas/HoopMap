@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { ArrowRight, Mail } from "lucide-react";
 import { Button, Input } from "@/components/ui";
@@ -132,6 +133,16 @@ export function EmailAuthForm({ next }: { next: string }) {
             }
           />
         </label>
+        {mode === "login" && (
+          <div className="text-right">
+            <Link
+              href="/forgot-password"
+              className="text-xs font-bold text-orange hover:underline"
+            >
+              Забыли пароль?
+            </Link>
+          </div>
+        )}
 
         {error && (
           <p role="alert" className="rounded-xl bg-danger/10 p-3 text-sm font-bold text-danger">

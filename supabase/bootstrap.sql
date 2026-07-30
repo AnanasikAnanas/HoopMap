@@ -161,6 +161,17 @@ create table if not exists public.api_rate_limits (
 );
 alter table public.api_rate_limits enable row level security;
 
+create table if not exists public.account_link_tokens (
+  token_hash text primary key check (token_hash ~ '^[a-f0-9]{64}$'),
+  profile_id bigint not null references public.profiles(id) on delete cascade,
+  expires_at timestamptz not null,
+  consumed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists account_link_tokens_profile_idx
+  on public.account_link_tokens(profile_id, expires_at desc);
+alter table public.account_link_tokens enable row level security;
+
 create or replace function public.set_updated_at()
 returns trigger language plpgsql set search_path = '' as $$
 begin
@@ -321,6 +332,7 @@ grant select, insert, update, delete on table
 to authenticated;
 grant usage, select on all sequences in schema public to authenticated, service_role;
 grant all on table public.api_rate_limits to service_role;
+grant all on table public.account_link_tokens to service_role;
 
 create or replace function public.nearby_courts(
   lat double precision,
@@ -463,14 +475,170 @@ begin
 end;
 $$;
 
+create or replace function public.consume_telegram_link(
+  target_token_hash text,
+  target_telegram_id bigint,
+  telegram_username text default '',
+  telegram_first_name text default '',
+  telegram_last_name text default ''
+)
+returns table (linked_profile_id bigint, previous_auth_user_id uuid)
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  target_profile_id bigint;
+  source_profile_id bigint;
+  source_auth_user_id uuid;
+  source_auth_email text;
+  target_record public.profiles;
+  source_record public.profiles;
+begin
+  if target_token_hash !~ '^[a-f0-9]{64}$'
+    or target_telegram_id <= 0
+    or char_length(telegram_username) > 150
+    or char_length(telegram_first_name) > 150
+    or char_length(telegram_last_name) > 150 then
+    raise exception 'Invalid account link';
+  end if;
+
+  select link.profile_id into target_profile_id
+  from public.account_link_tokens link
+  where link.token_hash = target_token_hash
+    and link.consumed_at is null
+    and link.expires_at > now()
+  for update;
+  if target_profile_id is null then
+    raise exception 'Account link has expired';
+  end if;
+
+  select * into target_record
+  from public.profiles
+  where id = target_profile_id
+  for update;
+  if target_record.id is null then raise exception 'Target profile not found'; end if;
+  if target_record.telegram_id is not null
+    and target_record.telegram_id <> target_telegram_id then
+    raise exception 'Another Telegram account is already linked';
+  end if;
+
+  select * into source_record
+  from public.profiles
+  where telegram_id = target_telegram_id
+  for update;
+  source_profile_id := source_record.id;
+
+  if source_profile_id is not null and source_profile_id <> target_profile_id then
+    source_auth_user_id := source_record.auth_user_id;
+    select auth_user.email into source_auth_email
+    from auth.users auth_user
+    where auth_user.id = source_auth_user_id;
+    if source_auth_email is null
+      or source_auth_email !~ '^tg_[0-9]+@users\.hoopmap\.invalid$' then
+      raise exception 'Telegram account is already linked';
+    end if;
+
+    insert into public.favorite_courts(user_id, court_id, created_at)
+    select target_profile_id, court_id, created_at
+    from public.favorite_courts
+    where user_id = source_profile_id
+    on conflict (user_id, court_id) do nothing;
+    delete from public.favorite_courts where user_id = source_profile_id;
+
+    delete from public.court_reviews source_review
+    using public.court_reviews target_review
+    where source_review.user_id = source_profile_id
+      and target_review.user_id = target_profile_id
+      and source_review.court_id = target_review.court_id;
+    update public.court_reviews
+      set user_id = target_profile_id
+      where user_id = source_profile_id;
+
+    insert into public.game_participants(game_id, user_id, status, joined_at)
+    select game_id, target_profile_id, status, joined_at
+    from public.game_participants
+    where user_id = source_profile_id
+    on conflict (game_id, user_id) do update set
+      status = case
+        when public.game_participants.status = 'joined'
+          or excluded.status = 'joined' then 'joined'
+        else 'left'
+      end,
+      joined_at = least(public.game_participants.joined_at, excluded.joined_at);
+    delete from public.game_participants where user_id = source_profile_id;
+
+    update public.courts set created_by = target_profile_id
+      where created_by = source_profile_id;
+    update public.court_photos set uploaded_by = target_profile_id
+      where uploaded_by = source_profile_id;
+    update public.court_reports set user_id = target_profile_id
+      where user_id = source_profile_id;
+    update public.court_verifications set user_id = target_profile_id
+      where user_id = source_profile_id;
+    update public.games set creator_id = target_profile_id
+      where creator_id = source_profile_id;
+
+    update public.profiles target
+    set
+      username = case
+        when target.username like 'player\_%' escape '\'
+          and source_record.username <> '' then source_record.username
+        else target.username
+      end,
+      first_name = coalesce(nullif(target.first_name, ''), source_record.first_name),
+      last_name = coalesce(nullif(target.last_name, ''), source_record.last_name),
+      avatar_url = coalesce(nullif(target.avatar_url, ''), source_record.avatar_url),
+      role = case
+        when target.role = 'admin' or source_record.role = 'admin' then 'admin'
+        when target.role = 'moderator' or source_record.role = 'moderator' then 'moderator'
+        else 'user'
+      end,
+      reputation = greatest(target.reputation, source_record.reputation),
+      map_home_lat = coalesce(target.map_home_lat, source_record.map_home_lat),
+      map_home_lon = coalesce(target.map_home_lon, source_record.map_home_lon),
+      map_home_consent_at = coalesce(
+        target.map_home_consent_at,
+        source_record.map_home_consent_at
+      )
+    where target.id = target_profile_id;
+
+    delete from public.profiles where id = source_profile_id;
+  end if;
+
+  update public.profiles
+  set
+    telegram_id = target_telegram_id,
+    username = case
+      when username = '' and telegram_username <> '' then telegram_username
+      else username
+    end,
+    first_name = coalesce(nullif(first_name, ''), telegram_first_name),
+    last_name = coalesce(nullif(last_name, ''), telegram_last_name)
+  where id = target_profile_id;
+
+  update public.account_link_tokens
+    set consumed_at = now()
+    where token_hash = target_token_hash;
+  delete from public.account_link_tokens
+    where profile_id = target_profile_id
+      and token_hash <> target_token_hash;
+  delete from public.account_link_tokens
+    where expires_at < now() - interval '1 day';
+
+  return query select target_profile_id, source_auth_user_id;
+end;
+$$;
+
 revoke all on function public.verify_court(bigint, boolean, text) from public;
 revoke all on function public.create_game(bigint, text, text, timestamptz, timestamptz, text, integer) from public;
 revoke all on function public.join_game(bigint) from public;
 revoke all on function public.leave_game(bigint) from public;
+revoke all on function public.consume_telegram_link(text, bigint, text, text, text) from public;
 grant execute on function public.verify_court(bigint, boolean, text) to authenticated;
 grant execute on function public.create_game(bigint, text, text, timestamptz, timestamptz, text, integer) to authenticated;
 grant execute on function public.join_game(bigint) to authenticated;
 grant execute on function public.leave_game(bigint) to authenticated;
+grant execute on function public.consume_telegram_link(text, bigint, text, text, text)
+  to service_role;
 grant execute on function public.nearby_courts(double precision, double precision, integer) to anon, authenticated;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
