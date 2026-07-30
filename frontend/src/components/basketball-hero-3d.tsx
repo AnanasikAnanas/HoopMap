@@ -15,7 +15,7 @@ export function BasketballHero3D() {
     let disposed = false;
     let frame = 0;
     let visible = true;
-    let model: import("three").Group | null = null;
+    let ball: import("three").Group | null = null;
     let renderer: import("three").WebGLRenderer | null = null;
     let resizeObserver: ResizeObserver | null = null;
     let visibilityObserver: IntersectionObserver | null = null;
@@ -81,7 +81,7 @@ export function BasketballHero3D() {
         orbit.rotation.y = -0.25;
         scene.add(orbit);
 
-        model = await new FBXLoader().loadAsync("/models/basketball.fbx");
+        const model = await new FBXLoader().loadAsync("/models/basketball.fbx");
         if (disposed) return;
 
         const bounds = new THREE.Box3().setFromObject(model);
@@ -92,17 +92,137 @@ export function BasketballHero3D() {
         model.scale.setScalar(scale);
         model.position.set(
           -center.x * scale,
-          -center.y * scale - 0.02,
+          -center.y * scale,
           -center.z * scale,
         );
-        model.rotation.set(-0.12, -0.45, 0.08);
+
+        const textureCanvas = document.createElement("canvas");
+        textureCanvas.width = 256;
+        textureCanvas.height = 256;
+        const textureContext = textureCanvas.getContext("2d");
+        if (textureContext) {
+          textureContext.fillStyle = "#e96b2c";
+          textureContext.fillRect(0, 0, 256, 256);
+          let seed = 28411;
+          const random = () => {
+            seed = (seed * 16807) % 2147483647;
+            return (seed - 1) / 2147483646;
+          };
+          for (let index = 0; index < 10500; index += 1) {
+            const x = random() * 256;
+            const y = random() * 256;
+            const radius = 0.18 + random() * 0.62;
+            const light = random() > 0.48;
+            textureContext.fillStyle = light
+              ? "rgba(255, 174, 107, 0.32)"
+              : "rgba(84, 36, 16, 0.30)";
+            textureContext.beginPath();
+            textureContext.arc(x, y, radius, 0, Math.PI * 2);
+            textureContext.fill();
+          }
+        }
+        const leatherTexture = new THREE.CanvasTexture(textureCanvas);
+        leatherTexture.colorSpace = THREE.SRGBColorSpace;
+        leatherTexture.wrapS = THREE.RepeatWrapping;
+        leatherTexture.wrapT = THREE.RepeatWrapping;
+        leatherTexture.repeat.set(2.2, 2.2);
+        leatherTexture.anisotropy = Math.min(
+          renderer.capabilities.getMaxAnisotropy(),
+          4,
+        );
+
+        const leatherMaterial = new THREE.MeshPhysicalMaterial({
+          color: 0xf17835,
+          map: leatherTexture,
+          bumpMap: leatherTexture,
+          bumpScale: 0.018,
+          roughness: 0.82,
+          metalness: 0,
+          clearcoat: 0.08,
+          clearcoatRoughness: 0.78,
+        });
         model.traverse((child) => {
           if (child instanceof THREE.Mesh) {
+            const previousMaterials = Array.isArray(child.material)
+              ? child.material
+              : [child.material];
+            previousMaterials.forEach((material) => material.dispose());
+            child.material = leatherMaterial;
             child.castShadow = true;
             child.receiveShadow = true;
           }
         });
-        scene.add(model);
+
+        const seamMaterial = new THREE.MeshStandardMaterial({
+          color: 0x29140d,
+          roughness: 0.92,
+          metalness: 0,
+        });
+        const radius = 1.235;
+        const createSeam = (
+          pointAt: (angle: number) => import("three").Vector3,
+          width = 0.026,
+        ) => {
+          const points = Array.from({ length: 96 }, (_, index) =>
+            pointAt((index / 96) * Math.PI * 2),
+          );
+          const curve = new THREE.CatmullRomCurve3(
+            points,
+            true,
+            "catmullrom",
+            0.35,
+          );
+          return new THREE.Mesh(
+            new THREE.TubeGeometry(curve, 128, width, 7, true),
+            seamMaterial,
+          );
+        };
+
+        const seams = [
+          createSeam(
+            (angle) =>
+              new THREE.Vector3(
+                Math.cos(angle) * radius,
+                Math.sin(angle) * radius,
+                0,
+              ),
+          ),
+          createSeam(
+            (angle) =>
+              new THREE.Vector3(
+                0,
+                Math.sin(angle) * radius,
+                Math.cos(angle) * radius,
+              ),
+          ),
+          createSeam((angle) => {
+            const y = Math.sin(angle * 2) * radius * 0.43;
+            const horizontalRadius = Math.sqrt(radius ** 2 - y ** 2);
+            return new THREE.Vector3(
+              Math.cos(angle) * horizontalRadius,
+              y,
+              Math.sin(angle) * horizontalRadius,
+            );
+          }, 0.023),
+          createSeam((angle) => {
+            const x = Math.cos(angle * 2) * radius * 0.43;
+            const verticalRadius = Math.sqrt(radius ** 2 - x ** 2);
+            return new THREE.Vector3(
+              x,
+              Math.sin(angle) * verticalRadius,
+              Math.cos(angle) * verticalRadius,
+            );
+          }, 0.023),
+        ];
+        seams.forEach((seam) => {
+          seam.castShadow = true;
+        });
+
+        ball = new THREE.Group();
+        ball.add(model, ...seams);
+        ball.position.y = -0.02;
+        ball.rotation.set(-0.12, -0.45, 0.08);
+        scene.add(ball);
 
         const resize = () => {
           if (!mountRef.current || !renderer) return;
@@ -121,11 +241,10 @@ export function BasketballHero3D() {
           if (disposed || !renderer) return;
           if (visible) {
             const elapsed = clock.getElapsedTime();
-            if (model && !reduceMotion) {
-              model.rotation.y = -0.45 + elapsed * 0.42 + pointerX * 0.28;
-              model.rotation.x = -0.12 + pointerY * 0.16;
-              model.position.y =
-                -center.y * scale - 0.02 + Math.sin(elapsed * 1.35) * 0.08;
+            if (ball && !reduceMotion) {
+              ball.rotation.y = -0.45 + elapsed * 0.42 + pointerX * 0.28;
+              ball.rotation.x = -0.12 + pointerY * 0.16;
+              ball.position.y = -0.02 + Math.sin(elapsed * 1.35) * 0.08;
               orbit.rotation.z = elapsed * 0.12;
             }
             renderer.render(scene, camera);
@@ -173,6 +292,7 @@ export function BasketballHero3D() {
               : [object.material];
             materials.forEach((material) => material.dispose());
           });
+          leatherTexture.dispose();
         };
       } catch {
         if (!disposed) setState("fallback");
