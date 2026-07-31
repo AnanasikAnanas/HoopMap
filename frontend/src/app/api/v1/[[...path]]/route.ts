@@ -1216,6 +1216,260 @@ async function gameMembership(
   return oneGame(request, gameId);
 }
 
+const gameMessageSelect = `
+  id,game_id,author_id,body,is_pinned,deleted_at,created_at,
+  author:profiles!game_messages_author_id_fkey(
+    id,username,first_name,last_name,avatar_url,role,reputation
+  )
+`;
+
+async function gameChatAccess(request: NextRequest, gameId: number) {
+  const current = await identity(request, true);
+  const service = createServiceClient();
+  const game = await service
+    .from("games")
+    .select("id,creator_id,status,ends_at")
+    .eq("id", gameId)
+    .maybeSingle();
+  if (game.error) throw game.error;
+  if (!game.data) throw new HttpError(404, "Игра не найдена");
+
+  const isOwner = Number(game.data.creator_id) === current!.profile.id;
+  const moderator = isModerator(current!.profile);
+  let isParticipant = isOwner;
+  if (!isParticipant) {
+    const membership = await service
+      .from("game_participants")
+      .select("status")
+      .eq("game_id", gameId)
+      .eq("user_id", current!.profile.id)
+      .eq("status", "joined")
+      .maybeSingle();
+    if (membership.error) throw membership.error;
+    isParticipant = Boolean(membership.data);
+  }
+  if (!isParticipant && !moderator) {
+    throw new HttpError(403, "Чат доступен только участникам игры");
+  }
+
+  const chatClosesAt = Date.parse(game.data.ends_at) + 24 * 60 * 60 * 1000;
+  return {
+    current: current!,
+    service,
+    canPost:
+      isParticipant &&
+      game.data.status !== "cancelled" &&
+      Date.now() <= chatClosesAt,
+    canModerate: isOwner || moderator,
+  };
+}
+
+function serializeGameMessage(
+  record: any,
+  current: RequestIdentity,
+  canModerate: boolean,
+) {
+  const isDeleted = Boolean(record.deleted_at);
+  const isMine = Number(record.author_id) === current.profile.id;
+  return {
+    id: Number(record.id),
+    body: isDeleted ? "" : record.body,
+    is_pinned: Boolean(record.is_pinned) && !isDeleted,
+    is_deleted: isDeleted,
+    created_at: record.created_at,
+    author: publicUser(record.author),
+    is_mine: isMine,
+    can_delete: !isDeleted && (isMine || canModerate),
+  };
+}
+
+async function gameMessageRecord(
+  service: ReturnType<typeof createServiceClient>,
+  gameId: number,
+  messageId: number,
+) {
+  const message = await service
+    .from("game_messages")
+    .select(gameMessageSelect)
+    .eq("id", messageId)
+    .eq("game_id", gameId)
+    .maybeSingle();
+  if (message.error) throw message.error;
+  if (!message.data) throw new HttpError(404, "Сообщение не найдено");
+  return message.data;
+}
+
+async function listGameMessages(request: NextRequest, gameId: number) {
+  const access = await gameChatAccess(request, gameId);
+  const messages = await access.service
+    .from("game_messages")
+    .select(gameMessageSelect)
+    .eq("game_id", gameId)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (messages.error) throw messages.error;
+  const records = (messages.data ?? []).reverse();
+  const serialized = records.map((record) =>
+    serializeGameMessage(record, access.current, access.canModerate),
+  );
+
+  let pinned = serialized.find((message) => message.is_pinned) ?? null;
+  if (!pinned) {
+    const pinnedRecord = await access.service
+      .from("game_messages")
+      .select(gameMessageSelect)
+      .eq("game_id", gameId)
+      .eq("is_pinned", true)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (pinnedRecord.error) throw pinnedRecord.error;
+    if (pinnedRecord.data) {
+      pinned = serializeGameMessage(
+        pinnedRecord.data,
+        access.current,
+        access.canModerate,
+      );
+    }
+  }
+
+  return json({
+    messages: serialized,
+    pinned,
+    can_post: access.canPost,
+    can_moderate: access.canModerate,
+  });
+}
+
+async function sendGameMessage(request: NextRequest, gameId: number) {
+  const access = await gameChatAccess(request, gameId);
+  await rateLimit(request, "game-chat-send", 30, 60, access.current.profile.id);
+  if (!access.canPost) {
+    throw new HttpError(409, "В эту игру уже нельзя отправлять сообщения");
+  }
+  const parsed = z
+    .object({ message: z.string().trim().min(1).max(1000) })
+    .safeParse(await body(request));
+  if (!parsed.success) {
+    throw new HttpError(
+      400,
+      "Сообщение должно содержать от 1 до 1000 символов",
+    );
+  }
+  const inserted = await access.service
+    .from("game_messages")
+    .insert({
+      game_id: gameId,
+      author_id: access.current.profile.id,
+      body: parsed.data.message,
+    })
+    .select(gameMessageSelect)
+    .single();
+  if (inserted.error) throw inserted.error;
+  return json(
+    serializeGameMessage(inserted.data, access.current, access.canModerate),
+    201,
+  );
+}
+
+async function deleteGameMessage(request: NextRequest, gameId: number) {
+  const access = await gameChatAccess(request, gameId);
+  await rateLimit(
+    request,
+    "game-chat-moderate",
+    120,
+    3600,
+    access.current.profile.id,
+  );
+  const parsed = z
+    .object({ message_id: z.number().int().positive() })
+    .safeParse(await body(request));
+  if (!parsed.success) throw new HttpError(400, "Некорректное сообщение");
+  const message = await gameMessageRecord(
+    access.service,
+    gameId,
+    parsed.data.message_id,
+  );
+  if (
+    Number(message.author_id) !== access.current.profile.id &&
+    !access.canModerate
+  ) {
+    throw new HttpError(403, "Можно удалить только своё сообщение");
+  }
+  if (message.deleted_at) {
+    return json(
+      serializeGameMessage(message, access.current, access.canModerate),
+    );
+  }
+  const updated = await access.service
+    .from("game_messages")
+    .update({
+      body: "",
+      is_pinned: false,
+      pinned_by: null,
+      deleted_at: new Date().toISOString(),
+      deleted_by: access.current.profile.id,
+    })
+    .eq("id", parsed.data.message_id)
+    .eq("game_id", gameId)
+    .select(gameMessageSelect)
+    .single();
+  if (updated.error) throw updated.error;
+  return json(
+    serializeGameMessage(updated.data, access.current, access.canModerate),
+  );
+}
+
+async function pinGameMessage(request: NextRequest, gameId: number) {
+  const access = await gameChatAccess(request, gameId);
+  await rateLimit(
+    request,
+    "game-chat-moderate",
+    120,
+    3600,
+    access.current.profile.id,
+  );
+  if (!access.canModerate) {
+    throw new HttpError(403, "Закреплять сообщения может только организатор");
+  }
+  const parsed = z
+    .object({
+      message_id: z.number().int().positive(),
+      pinned: z.boolean(),
+    })
+    .safeParse(await body(request));
+  if (!parsed.success) throw new HttpError(400, "Некорректное сообщение");
+  const message = await gameMessageRecord(
+    access.service,
+    gameId,
+    parsed.data.message_id,
+  );
+  if (message.deleted_at) {
+    throw new HttpError(409, "Удалённое сообщение нельзя закрепить");
+  }
+  if (parsed.data.pinned) {
+    const unpinned = await access.service
+      .from("game_messages")
+      .update({ is_pinned: false, pinned_by: null })
+      .eq("game_id", gameId)
+      .eq("is_pinned", true);
+    if (unpinned.error) throw unpinned.error;
+  }
+  const updated = await access.service
+    .from("game_messages")
+    .update({
+      is_pinned: parsed.data.pinned,
+      pinned_by: parsed.data.pinned ? access.current.profile.id : null,
+    })
+    .eq("id", parsed.data.message_id)
+    .eq("game_id", gameId)
+    .select(gameMessageSelect)
+    .single();
+  if (updated.error) throw updated.error;
+  return json(
+    serializeGameMessage(updated.data, access.current, access.canModerate),
+  );
+}
+
 const socialProfileSelect =
   "id,username,first_name,last_name,avatar_url,role,reputation";
 
@@ -2873,6 +3127,14 @@ async function dispatch(
       return inviteToGame(request, gameId);
     if (action === "invite-response" && request.method === "POST")
       return respondToGameInvitation(request, gameId);
+    if (action === "messages" && request.method === "GET")
+      return listGameMessages(request, gameId);
+    if (action === "messages" && request.method === "POST")
+      return sendGameMessage(request, gameId);
+    if (action === "messages" && request.method === "DELETE")
+      return deleteGameMessage(request, gameId);
+    if (action === "messages" && request.method === "PATCH")
+      return pinGameMessage(request, gameId);
   }
   if (resource === "social") {
     if (lookup === "overview" && request.method === "GET")

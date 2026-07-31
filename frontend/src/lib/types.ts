@@ -67,6 +67,22 @@ export type Game = {
   can_join: boolean;
   participants: GameParticipant[];
 };
+export type GameChatMessage = {
+  id: number;
+  body: string;
+  is_pinned: boolean;
+  is_deleted: boolean;
+  created_at: string;
+  author: PublicUser;
+  is_mine: boolean;
+  can_delete: boolean;
+};
+export type GameChat = {
+  messages: GameChatMessage[];
+  pinned: GameChatMessage | null;
+  can_post: boolean;
+  can_moderate: boolean;
+};
 export type Page<T> = {
   count: number;
   next: string | null;

@@ -18,6 +18,7 @@ import {
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { BasketballLoader } from "@/components/basketball-feedback";
+import { GameChat } from "@/components/game-chat";
 import { Header, MobileNav } from "@/components/header";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, Input } from "@/components/ui";
@@ -272,6 +273,8 @@ export default function GamePage() {
                 })}
               </div>
             </Card>
+
+            {(game.is_owner || game.is_joined) && <GameChat gameId={game.id} />}
 
             {editing && game.is_owner && (
               <GameEditor

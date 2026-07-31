@@ -1,6 +1,8 @@
 import type {
   Court,
   Game,
+  GameChat,
+  GameChatMessage,
   NotificationSettings,
   Page,
   PushSubscriptionInput,
@@ -29,6 +31,10 @@ export class ApiError extends Error {
 
 function setAccessToken(token: string | null): void {
   accessToken = token;
+}
+
+export function currentAccessToken(): string | null {
+  return accessToken;
 }
 
 async function refreshAccessToken(): Promise<string | null> {
@@ -156,6 +162,22 @@ export const gamesApi = {
     api<Game>(`/games/${id}/invite-response/`, {
       method: "POST",
       body: JSON.stringify({ action }),
+    }),
+  messages: (id: number) => api<GameChat>(`/games/${id}/messages/`),
+  sendMessage: (id: number, message: string) =>
+    api<GameChatMessage>(`/games/${id}/messages/`, {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    }),
+  deleteMessage: (id: number, messageId: number) =>
+    api<GameChatMessage>(`/games/${id}/messages/`, {
+      method: "DELETE",
+      body: JSON.stringify({ message_id: messageId }),
+    }),
+  pinMessage: (id: number, messageId: number, pinned: boolean) =>
+    api<GameChatMessage>(`/games/${id}/messages/`, {
+      method: "PATCH",
+      body: JSON.stringify({ message_id: messageId, pinned }),
     }),
 };
 
